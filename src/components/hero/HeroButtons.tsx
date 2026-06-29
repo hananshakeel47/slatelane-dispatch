@@ -1,19 +1,19 @@
 export default function HeroButtons() {
   return (
-    <div className="mt-10 flex flex-col sm:flex-row gap-4">
+    <div className="mt-10 flex flex-col gap-4 sm:flex-row">
 
       <a
         href="#contact"
-        className="rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 px-8 py-4 text-white font-semibold shadow-lg transition-all duration-300 hover:scale-105 hover:shadow-sky-500/30 text-center"
+        className="rounded-xl bg-sky-500 px-8 py-4 text-center font-semibold text-white transition hover:bg-sky-400"
       >
-        Book Free Consultation
+        Schedule a Discovery Call
       </a>
 
       <a
-        href="tel:+10000000000"
-        className="rounded-xl border border-sky-500/30 px-8 py-4 text-white font-semibold transition-all duration-300 hover:bg-sky-500/10 hover:scale-105 text-center"
+        href="#services"
+        className="rounded-xl border border-white/15 px-8 py-4 text-center font-semibold text-white transition hover:bg-white/5"
       >
-        Call Now
+        Explore Services
       </a>
 
     </div>
