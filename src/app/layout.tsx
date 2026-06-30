@@ -22,98 +22,49 @@ export const metadata: Metadata = {
   },
 
   description:
-    "SlateLane Dispatch helps owner-operators and small trucking fleets maximize revenue through professional dispatching, broker negotiation, route planning, paperwork management, and dedicated back-office support.",
+    "Professional truck dispatch services helping owner-operators and small fleets maximize profits with high-paying freight across the USA.",
 
   keywords: [
     "truck dispatch",
     "dispatch services",
-    "owner operator dispatch",
-    "freight dispatch",
+    "owner operator",
+    "freight dispatcher",
+    "USA trucking",
+    "truck loads",
     "dispatch company",
-    "freight broker",
-    "route planning",
-    "paperwork management",
-    "SlateLane Dispatch",
   ],
-
-  authors: [
-    {
-      name: "SlateLane Dispatch",
-    },
-  ],
-
-  creator: "SlateLane Dispatch",
-
-  publisher: "SlateLane Dispatch",
-
-  alternates: {
-    canonical: "https://slatelanedispatch.com",
-  },
-
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-      "max-video-preview": -1,
-    },
-  },
-
-  icons: {
-    icon: "/favicon.png",
-    shortcut: "/favicon.png",
-    apple: "/favicon.png",
-  },
 
   verification: {
     google: "I7VlGiWYqqlf1xuOhw3E-o8bXSbGERlcDtKScusB1C8",
   },
 
   openGraph: {
-    title: "SlateLane Dispatch | Professional Truck Dispatch Services",
+    title: "SlateLane Dispatch",
     description:
-      "Professional dispatching, broker negotiation, route planning, paperwork management and 24/7 driver support.",
-
+      "Professional truck dispatch services across the United States.",
     url: "https://slatelanedispatch.com",
-
     siteName: "SlateLane Dispatch",
-
-    locale: "en_US",
-
-    type: "website",
-
     images: [
       {
         url: "/favicon.png",
-        width: 1254,
-        height: 1254,
-        alt: "SlateLane Dispatch",
+        width: 1024,
+        height: 1024,
       },
     ],
+    locale: "en_US",
+    type: "website",
   },
 
   twitter: {
     card: "summary_large_image",
-
     title: "SlateLane Dispatch",
-
     description:
-      "Professional truck dispatch services for owner operators and small fleets.",
-
+      "Professional truck dispatch services helping owner operators maximize profits.",
     images: ["/favicon.png"],
   },
 
-  applicationName: "SlateLane Dispatch",
-
-  category: "Transportation",
-
-  formatDetection: {
-    telephone: true,
-    email: true,
-    address: true,
+  icons: {
+    icon: "/favicon.png",
   },
 };
 
