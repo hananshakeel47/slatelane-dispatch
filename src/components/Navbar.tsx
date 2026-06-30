@@ -9,18 +9,26 @@ export default function Navbar() {
           </span>
         </a>
 
-        <div className="hidden items-center gap-8 md:flex">
-          <a href="#services" className="text-gray-300 hover:text-white transition">
+        <div className="hidden md:flex items-center gap-8">
+          <a
+            href="#services"
+            className="text-gray-300 transition hover:text-sky-400"
+          >
             Services
-          </a>
-
-          <a href="#contact" className="text-gray-300 hover:text-white transition">
-            Contact
           </a>
 
           <a
             href="#contact"
-            className="rounded-full bg-sky-500 px-5 py-2.5 font-semibold text-white transition hover:bg-sky-400"
+            className="text-gray-300 transition hover:text-sky-400"
+          >
+            Contact
+          </a>
+
+          <a
+            href="https://calendly.com/contact-slatelanedispatch/free-dispatch-consultation"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-full bg-sky-500 px-6 py-3 font-semibold text-white transition hover:bg-sky-400"
           >
             Schedule a Call
           </a>

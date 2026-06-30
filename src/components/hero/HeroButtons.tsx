@@ -3,7 +3,9 @@ export default function HeroButtons() {
     <div className="mt-10 flex flex-col gap-4 sm:flex-row">
 
       <a
-        href="#contact"
+        href="https://calendly.com/contact-slatelanedispatch/free-dispatch-consultation"
+        target="_blank"
+        rel="noopener noreferrer"
         className="rounded-xl bg-sky-500 px-8 py-4 text-center font-semibold text-white transition hover:bg-sky-400"
       >
         Schedule a Discovery Call
