@@ -1,3 +1,4 @@
+import { supabase } from "@/lib/supabase";
 import { Resend } from "resend";
 import { NextResponse } from "next/server";
 
@@ -14,6 +15,33 @@ export async function POST(req: Request) {
       );
     }
 
+    // Save lead to Supabase
+    const { error: dbError } = await supabase
+      .from("leads")
+      .insert([
+        {
+          name,
+          email,
+          phone,
+          message,
+        },
+      ]);
+
+    if (dbError) {
+      console.error("Supabase Error:", dbError);
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: dbError.message,
+        },
+        {
+          status: 500,
+        }
+      );
+    }
+
+    // Email to you
     await resend.emails.send({
       from: "SlateLane Dispatch <contact@slatelanedispatch.com>",
       to: ["contact@slatelanedispatch.com"],
@@ -34,38 +62,31 @@ export async function POST(req: Request) {
           <p><strong>Message</strong></p>
 
           <div style="padding:15px;background:#1e293b;border-radius:8px">
-          ${message}
+            ${message}
           </div>
-
       </div>
       `,
     });
 
+    // Auto reply to customer
     await resend.emails.send({
       from: "SlateLane Dispatch <contact@slatelanedispatch.com>",
       to: [email],
       subject: "We received your request | SlateLane Dispatch",
       html: `
       <div style="font-family:Arial;padding:30px">
+        <h2>Hi ${name},</h2>
 
-      <h2>Hi ${name},</h2>
+        <p>
+          Thank you for contacting <strong>SlateLane Dispatch</strong>.
+          We received your request successfully.
+          One of our dispatch specialists will contact you shortly.
+        </p>
 
-      <p>
+        <br>
 
-      Thank you for contacting <strong>SlateLane Dispatch</strong>.
-
-      We received your request successfully.
-
-      One of our dispatch specialists will contact you shortly.
-
-      </p>
-
-      <br>
-
-      <strong>SlateLane Dispatch</strong><br>
-
-      contact@slatelanedispatch.com
-
+        <strong>SlateLane Dispatch</strong><br>
+        contact@slatelanedispatch.com
       </div>
       `,
     });
@@ -74,7 +95,7 @@ export async function POST(req: Request) {
       success: true,
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     return NextResponse.json(
       {
