@@ -210,6 +210,20 @@ export default async function CarrierDetailPage({
     notFound();
   }
 
+  /*
+   * Snapshot the non-null carrier fields used by the Server Action.
+   * TypeScript does not preserve the `carrier` null-narrowing inside
+   * a nested async Server Action closure.
+   */
+  const carrierForLead = {
+    owner_name: carrier.owner_name,
+    legal_name: carrier.legal_name,
+    email: carrier.email,
+    phone: carrier.phone,
+    dot_number: carrier.dot_number,
+    mc_number: carrier.mc_number,
+  };
+
 
   // ==========================================================
   // CHECK EXISTING LEAD
@@ -287,26 +301,26 @@ export default async function CarrierDetailPage({
         .insert({
 
           name:
-            carrier.owner_name ||
-            carrier.legal_name,
+            carrierForLead.owner_name ||
+            carrierForLead.legal_name,
 
           company_name:
-            carrier.legal_name,
+            carrierForLead.legal_name,
 
           email:
-            carrier.email,
+            carrierForLead.email,
 
           phone:
-            carrier.phone,
+            carrierForLead.phone,
 
           message:
             "FMCSA carrier prospect added from SlateLane CRM.",
 
           carrier_dot_number:
-            carrier.dot_number,
+            carrierForLead.dot_number,
 
           mc_number:
-            carrier.mc_number,
+            carrierForLead.mc_number,
 
           source:
             "fmcsa",
