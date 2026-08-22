@@ -13,37 +13,21 @@ import {
   renderEmailTemplate,
 } from "./render";
 
-
 type SendTemplateOptions = {
   leadId: string;
-
   templateId: string;
-
   enrollmentId?: string | null;
-
   sequenceStepId?: string | null;
 };
 
-
-function validEmail(
-  email: string
-): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
-    email
-  );
+function validEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
-
 
 export async function sendTemplateEmail(
   options: SendTemplateOptions
 ) {
-  const supabase =
-    createAdminSupabase();
-
-
-  // ==========================================================
-  // LOAD LEAD
-  // ==========================================================
+  const supabase = createAdminSupabase();
 
   const {
     data: lead,
@@ -57,63 +41,43 @@ export async function sendTemplateEmail(
       email,
       carrier_dot_number,
       mc_number,
-
       status,
-
       email_opt_out,
       email_bounced,
       email_complained,
-
+      has_replied,
       unsubscribe_token
     `)
-    .eq(
-      "id",
-      options.leadId
-    )
+    .eq("id", options.leadId)
     .maybeSingle();
 
-
-  if (
-    leadError ||
-    !lead
-  ) {
+  if (leadError || !lead) {
     throw new Error(
-      leadError?.message ||
-      "Lead not found."
+      leadError?.message || "Lead not found."
     );
   }
 
-
-  // ==========================================================
-  // EMAIL SAFETY CHECKS
-  // ==========================================================
-
-  if (
-    lead.email_opt_out
-  ) {
+  if (lead.has_replied) {
     throw new Error(
-      "Lead has unsubscribed."
+      "Lead has already replied. Automated email blocked."
     );
   }
 
+  if (lead.email_opt_out) {
+    throw new Error("Lead has unsubscribed.");
+  }
 
-  if (
-    lead.email_bounced
-  ) {
+  if (lead.email_bounced) {
     throw new Error(
       "Lead email previously bounced."
     );
   }
 
-
-  if (
-    lead.email_complained
-  ) {
+  if (lead.email_complained) {
     throw new Error(
       "Lead previously complained."
     );
   }
-
 
   if (!lead.email) {
     throw new Error(
@@ -121,55 +85,32 @@ export async function sendTemplateEmail(
     );
   }
 
-
   const toEmail =
-    lead.email
-      .trim()
-      .toLowerCase();
+    lead.email.trim().toLowerCase();
 
-
-  if (
-    !validEmail(
-      toEmail
-    )
-  ) {
+  if (!validEmail(toEmail)) {
     throw new Error(
       `Invalid email address: ${toEmail}`
     );
   }
 
-
-  // ==========================================================
-  // LOCAL SUPPRESSION CHECK
-  // ==========================================================
-
   const {
     data: suppression,
-    error:
-      suppressionError,
+    error: suppressionError,
   } = await supabase
-    .from(
-      "email_suppressions"
-    )
+    .from("email_suppressions")
     .select(`
       id,
       reason
     `)
-    .eq(
-      "email",
-      toEmail
-    )
+    .eq("email", toEmail)
     .maybeSingle();
 
-
-  if (
-    suppressionError
-  ) {
+  if (suppressionError) {
     throw new Error(
       `Could not check email suppression: ${suppressionError.message}`
     );
   }
-
 
   if (suppression) {
     throw new Error(
@@ -177,19 +118,11 @@ export async function sendTemplateEmail(
     );
   }
 
-
-  // ==========================================================
-  // LOAD EMAIL TEMPLATE
-  // ==========================================================
-
   const {
     data: template,
-    error:
-      templateError,
+    error: templateError,
   } = await supabase
-    .from(
-      "email_templates"
-    )
+    .from("email_templates")
     .select(`
       id,
       subject,
@@ -197,64 +130,36 @@ export async function sendTemplateEmail(
       text_body,
       active
     `)
-    .eq(
-      "id",
-      options.templateId
-    )
+    .eq("id", options.templateId)
     .maybeSingle();
 
-
-  if (
-    templateError ||
-    !template
-  ) {
+  if (templateError || !template) {
     throw new Error(
       templateError?.message ||
-      "Email template not found."
+        "Email template not found."
     );
   }
 
-
-  if (
-    !template.active
-  ) {
+  if (!template.active) {
     throw new Error(
       "Email template is inactive."
     );
   }
 
-
-  // ==========================================================
-  // ENSURE UNSUBSCRIBE TOKEN EXISTS
-  // ==========================================================
-
-  let token =
-    lead.unsubscribe_token;
-
+  let token = lead.unsubscribe_token;
 
   if (!token) {
-    token =
-      crypto.randomUUID();
-
+    token = crypto.randomUUID();
 
     const {
-      error:
-        tokenError,
+      error: tokenError,
     } = await supabase
       .from("leads")
       .update({
-        unsubscribe_token:
-          token,
-
-        updated_at:
-          new Date()
-            .toISOString(),
+        unsubscribe_token: token,
+        updated_at: new Date().toISOString(),
       })
-      .eq(
-        "id",
-        lead.id
-      );
-
+      .eq("id", lead.id);
 
     if (tokenError) {
       throw new Error(
@@ -263,22 +168,13 @@ export async function sendTemplateEmail(
     }
   }
 
-
-  // ==========================================================
-  // LOAD EMAIL CONFIGURATION
-  // ==========================================================
-
-  const config =
-    getEmailConfig();
-
+  const config = getEmailConfig();
 
   const unsubscribeUrl =
     `${config.publicUrl}/api/email/unsubscribe?token=${token}`;
 
-
-  // ==========================================================
-  // RENDER TEMPLATE
-  // ==========================================================
+  const replyToAddress =
+    `lead-${lead.id}@${config.inboundDomain}`;
 
   const rendered =
     renderEmailTemplate(
@@ -286,18 +182,11 @@ export async function sendTemplateEmail(
       lead,
       unsubscribeUrl,
       {
-        senderName:
-          config.senderName,
-
+        senderName: config.senderName,
         businessAddress:
           config.businessAddress,
       }
     );
-
-
-  // ==========================================================
-  // SEQUENCE DUPLICATE / RETRY PROTECTION
-  // ==========================================================
 
   if (
     options.enrollmentId &&
@@ -305,8 +194,7 @@ export async function sendTemplateEmail(
   ) {
     const {
       data: existingSend,
-      error:
-        existingSendError,
+      error: existingSendError,
     } = await supabase
       .from("email_sends")
       .select(`
@@ -325,136 +213,83 @@ export async function sendTemplateEmail(
       )
       .maybeSingle();
 
-
-    if (
-      existingSendError
-    ) {
+    if (existingSendError) {
       throw new Error(
         `Could not check previous send: ${existingSendError.message}`
       );
     }
 
-
-    // --------------------------------------------------------
-    // ALREADY SUCCESSFULLY SENT
-    // --------------------------------------------------------
-
     if (
       existingSend &&
-      [
-        "sent",
-        "delivered",
-      ].includes(
+      ["sent", "delivered"].includes(
         existingSend.status
       )
     ) {
       return {
-        sendId:
-          existingSend.id,
-
+        sendId: existingSend.id,
         resendEmailId:
-          existingSend
-            .resend_email_id,
-
-        alreadySent:
-          true,
+          existingSend.resend_email_id,
+        alreadySent: true,
       };
     }
-
-
-    // --------------------------------------------------------
-    // NEVER RETRY BOUNCED / COMPLAINT
-    // --------------------------------------------------------
 
     if (
       existingSend &&
       [
         "bounced",
         "complained",
-      ].includes(
-        existingSend.status
-      )
+        "suppressed",
+      ].includes(existingSend.status)
     ) {
       throw new Error(
         `Sequence step cannot be retried because previous status is ${existingSend.status}.`
       );
     }
 
-
-    // --------------------------------------------------------
-    // FAILED SENDS ARE RETRYABLE
-    //
-    // Delete previous failed send so our unique
-    // enrollment + step index allows a fresh attempt.
-    // --------------------------------------------------------
-
     if (
-      existingSend?.status ===
-      "failed"
+      existingSend?.status === "failed"
     ) {
       const {
-        error:
-          deleteError,
+        error: deleteError,
       } = await supabase
         .from("email_sends")
         .delete()
-        .eq(
-          "id",
-          existingSend.id
-        );
-
+        .eq("id", existingSend.id);
 
       if (deleteError) {
         throw new Error(
           `Could not reset failed email attempt: ${deleteError.message}`
         );
       }
-    }
-
-
-    // --------------------------------------------------------
-    // QUEUED / SENDING = DO NOT DUPLICATE
-    // --------------------------------------------------------
-
-    else if (
-      existingSend
-    ) {
+    } else if (existingSend) {
       throw new Error(
         `Sequence step already has send status: ${existingSend.status}`
       );
     }
   }
 
-
-  // ==========================================================
-  // CREATE EMAIL SEND LOG
-  // ==========================================================
-
   const {
     data: sendRecord,
-    error:
-      sendLogError,
+    error: sendLogError,
   } = await supabase
     .from("email_sends")
     .insert({
-      lead_id:
-        lead.id,
+      lead_id: lead.id,
 
       enrollment_id:
-        options
-          .enrollmentId ??
-        null,
+        options.enrollmentId ?? null,
 
       sequence_step_id:
-        options
-          .sequenceStepId ??
-        null,
+        options.sequenceStepId ?? null,
 
-      resend_email_id:
-        null,
+      resend_email_id: null,
 
-      to_email:
-        toEmail,
+      message_id: null,
+
+      reply_to_address:
+        replyToAddress,
+
+      to_email: toEmail,
 
       from_email:
         config.fromEmail,
@@ -462,45 +297,30 @@ export async function sendTemplateEmail(
       subject:
         rendered.subject,
 
-      status:
-        "queued",
+      status: "queued",
 
       scheduled_at:
-        new Date()
-          .toISOString(),
+        new Date().toISOString(),
 
-      sent_at:
-        null,
+      sent_at: null,
 
-      delivered_at:
-        null,
+      delivered_at: null,
 
-      bounced_at:
-        null,
+      bounced_at: null,
 
-      complained_at:
-        null,
+      complained_at: null,
 
-      failed_at:
-        null,
+      failed_at: null,
 
-      error_message:
-        null,
+      error_message: null,
 
       updated_at:
-        new Date()
-          .toISOString(),
+        new Date().toISOString(),
     })
-    .select(
-      "id"
-    )
+    .select("id")
     .single();
 
-
-  if (
-    sendLogError ||
-    !sendRecord
-  ) {
+  if (sendLogError || !sendRecord) {
     throw new Error(
       `Could not create email send record: ${
         sendLogError?.message ||
@@ -509,235 +329,140 @@ export async function sendTemplateEmail(
     );
   }
 
-
-  const sendId =
-    sendRecord.id;
-
-
-  // ==========================================================
-  // SEND THROUGH RESEND
-  // ==========================================================
+  const sendId = sendRecord.id;
 
   try {
-
-    // --------------------------------------------------------
-    // MARK AS SENDING
-    // --------------------------------------------------------
-
     const {
-      error:
-        sendingStatusError,
+      error: sendingStatusError,
     } = await supabase
       .from("email_sends")
       .update({
-        status:
-          "sending",
-
+        status: "sending",
         updated_at:
-          new Date()
-            .toISOString(),
+          new Date().toISOString(),
       })
-      .eq(
-        "id",
-        sendId
-      );
+      .eq("id", sendId);
 
-
-    if (
-      sendingStatusError
-    ) {
+    if (sendingStatusError) {
       throw new Error(
         `Could not mark email as sending: ${sendingStatusError.message}`
       );
     }
 
-
-    // --------------------------------------------------------
-    // RESEND CLIENT
-    // --------------------------------------------------------
-
     const resend =
       getResendClient();
-
-
-    // --------------------------------------------------------
-    // IDEMPOTENCY KEY
-    // --------------------------------------------------------
 
     const idempotencyKey =
       options.enrollmentId &&
       options.sequenceStepId
-
         ? `sequence/${options.enrollmentId}/${options.sequenceStepId}`
-
         : `send/${sendId}`;
-
-
-    // --------------------------------------------------------
-    // SEND EMAIL
-    // --------------------------------------------------------
 
     const {
       data,
-      error:
-        resendError,
-    } =
-      await resend.emails.send(
-        {
-          from:
-            config.fromEmail,
+      error: resendError,
+    } = await resend.emails.send(
+      {
+        from: config.fromEmail,
 
-          to: [
-            toEmail,
-          ],
+        to: [toEmail],
 
-          ...(config.replyTo
-            ? {
-                replyTo:
-                  config.replyTo,
-              }
-            : {}),
+        replyTo:
+          replyToAddress,
 
-          subject:
-            rendered.subject,
+        subject:
+          rendered.subject,
 
-          html:
-            rendered.html,
+        html:
+          rendered.html,
 
-          text:
-            rendered.text,
+        text:
+          rendered.text,
 
-          headers: {
-            "List-Unsubscribe":
-              `<${unsubscribeUrl}>`,
+        headers: {
+          "List-Unsubscribe":
+            `<${unsubscribeUrl}>`,
 
-            "List-Unsubscribe-Post":
-              "List-Unsubscribe=One-Click",
-          },
-
-          tags: [
-            {
-              name:
-                "lead_id",
-
-              value:
-                lead.id,
-            },
-
-            {
-              name:
-                "send_id",
-
-              value:
-                sendId,
-            },
-          ],
+          "List-Unsubscribe-Post":
+            "List-Unsubscribe=One-Click",
         },
 
-        {
-          idempotencyKey,
-        }
-      );
+        tags: [
+          {
+            name: "lead_id",
+            value: lead.id,
+          },
+          {
+            name: "send_id",
+            value: sendId,
+          },
+        ],
+      },
+      {
+        idempotencyKey,
+      }
+    );
 
-
-    if (
-      resendError
-    ) {
+    if (resendError) {
       throw new Error(
         resendError.message
       );
     }
 
-
-    if (
-      !data?.id
-    ) {
+    if (!data?.id) {
       throw new Error(
         "Resend did not return an email ID."
       );
     }
 
-
     const now =
-      new Date()
-        .toISOString();
-
-
-    // ========================================================
-    // MARK SEND AS SUCCESSFUL
-    // ========================================================
+      new Date().toISOString();
 
     const {
-      error:
-        sentUpdateError,
+      error: sentUpdateError,
     } = await supabase
       .from("email_sends")
       .update({
         resend_email_id:
           data.id,
 
-        status:
-          "sent",
+        status: "sent",
 
-        sent_at:
-          now,
+        sent_at: now,
 
-        failed_at:
-          null,
+        failed_at: null,
 
-        error_message:
-          null,
+        error_message: null,
 
-        updated_at:
-          now,
+        updated_at: now,
       })
-      .eq(
-        "id",
-        sendId
-      );
+      .eq("id", sendId);
 
-
-    if (
-      sentUpdateError
-    ) {
+    if (sentUpdateError) {
       console.error(
-        "Email was sent through Resend, but SlateLane could not update email_sends:",
+        "Email sent but SlateLane could not update email_sends:",
         sentUpdateError.message
       );
     }
 
-
-    // ========================================================
-    // UPDATE LEAD
-    // ========================================================
-
     const {
-      error:
-        leadUpdateError,
+      error: leadUpdateError,
     } = await supabase
       .from("leads")
       .update({
         last_email_sent_at:
           now,
 
-        updated_at:
-          now,
+        updated_at: now,
       })
-      .eq(
-        "id",
-        lead.id
-      );
+      .eq("id", lead.id);
 
-
-    if (
-      leadUpdateError
-    ) {
+    if (leadUpdateError) {
       console.error(
         "Could not update lead last_email_sent_at:",
         leadUpdateError.message
       );
     }
-
 
     return {
       sendId,
@@ -745,68 +470,46 @@ export async function sendTemplateEmail(
       resendEmailId:
         data.id,
 
-      alreadySent:
-        false,
+      replyToAddress,
+
+      alreadySent: false,
     };
-
-  } catch (
-    error
-  ) {
-
-    // ========================================================
-    // FAILURE HANDLING
-    // ========================================================
-
+  } catch (error) {
     const message =
       error instanceof Error
         ? error.message
         : "Unknown email send error.";
-
 
     console.error(
       `Email send failed for ${toEmail}:`,
       message
     );
 
-
     const now =
-      new Date()
-        .toISOString();
-
+      new Date().toISOString();
 
     const {
-      error:
-        failureLogError,
+      error: failureLogError,
     } = await supabase
       .from("email_sends")
       .update({
-        status:
-          "failed",
+        status: "failed",
 
-        failed_at:
-          now,
+        failed_at: now,
 
         error_message:
           message,
 
-        updated_at:
-          now,
+        updated_at: now,
       })
-      .eq(
-        "id",
-        sendId
-      );
+      .eq("id", sendId);
 
-
-    if (
-      failureLogError
-    ) {
+    if (failureLogError) {
       console.error(
         "Could not save failed email status:",
         failureLogError.message
       );
     }
-
 
     throw error;
   }

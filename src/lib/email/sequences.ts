@@ -10,21 +10,17 @@ import {
   STOP_LEAD_STATUSES,
 } from "./templates";
 
-
 function dateAfterHours(
   hours: number
 ) {
-  const date =
-    new Date();
+  const date = new Date();
 
   date.setHours(
-    date.getHours() +
-      hours
+    date.getHours() + hours
   );
 
   return date.toISOString();
 }
-
 
 async function stopEnrollment(
   enrollmentId: string
@@ -40,24 +36,13 @@ async function stopEnrollment(
       "email_sequence_enrollments"
     )
     .update({
-      status:
-        "stopped",
-
-      stopped_at:
-        now,
-
-      next_send_at:
-        null,
-
-      updated_at:
-        now,
+      status: "stopped",
+      stopped_at: now,
+      next_send_at: null,
+      updated_at: now,
     })
-    .eq(
-      "id",
-      enrollmentId
-    );
+    .eq("id", enrollmentId);
 }
-
 
 export async function enrollLeadInSequence(
   leadId: string,
@@ -65,11 +50,6 @@ export async function enrollLeadInSequence(
 ) {
   const supabase =
     createAdminSupabase();
-
-
-  // ==========================================================
-  // LEAD
-  // ==========================================================
 
   const {
     data: lead,
@@ -82,25 +62,18 @@ export async function enrollLeadInSequence(
       status,
       email_opt_out,
       email_bounced,
-      email_complained
+      email_complained,
+      has_replied
     `)
-    .eq(
-      "id",
-      leadId
-    )
+    .eq("id", leadId)
     .maybeSingle();
 
-
-  if (
-    leadError ||
-    !lead
-  ) {
+  if (leadError || !lead) {
     throw new Error(
       leadError?.message ||
       "Lead not found."
     );
   }
-
 
   if (!lead.email) {
     throw new Error(
@@ -108,33 +81,21 @@ export async function enrollLeadInSequence(
     );
   }
 
-
-  if (
-    lead.email_opt_out
-  ) {
+  if (lead.has_replied) {
     throw new Error(
-      "Lead has unsubscribed."
+      "Lead already replied. Sequence cannot be started."
     );
   }
 
-
   if (
-    lead.email_bounced
-  ) {
-    throw new Error(
-      "Lead email previously bounced."
-    );
-  }
-
-
-  if (
+    lead.email_opt_out ||
+    lead.email_bounced ||
     lead.email_complained
   ) {
     throw new Error(
-      "Lead previously complained."
+      "Lead cannot receive automated email."
     );
   }
-
 
   if (
     STOP_LEAD_STATUSES.has(
@@ -146,29 +107,17 @@ export async function enrollLeadInSequence(
     );
   }
 
-
-  // ==========================================================
-  // SEQUENCE
-  // ==========================================================
-
   const {
     data: sequence,
-    error:
-      sequenceError,
+    error: sequenceError,
   } = await supabase
-    .from(
-      "email_sequences"
-    )
+    .from("email_sequences")
     .select(`
       id,
       active
     `)
-    .eq(
-      "id",
-      sequenceId
-    )
+    .eq("id", sequenceId)
     .maybeSingle();
-
 
   if (
     sequenceError ||
@@ -180,24 +129,15 @@ export async function enrollLeadInSequence(
     );
   }
 
-
-  if (
-    !sequence.active
-  ) {
+  if (!sequence.active) {
     throw new Error(
       "Sequence is inactive."
     );
   }
 
-
-  // ==========================================================
-  // CHECK EXISTING ENROLLMENT
-  // ==========================================================
-
   const {
     data: existing,
-    error:
-      existingError,
+    error: existingError,
   } = await supabase
     .from(
       "email_sequence_enrollments"
@@ -208,16 +148,9 @@ export async function enrollLeadInSequence(
       current_step,
       next_send_at
     `)
-    .eq(
-      "lead_id",
-      leadId
-    )
-    .eq(
-      "sequence_id",
-      sequenceId
-    )
+    .eq("lead_id", leadId)
+    .eq("sequence_id", sequenceId)
     .maybeSingle();
-
 
   if (existingError) {
     throw new Error(
@@ -225,24 +158,15 @@ export async function enrollLeadInSequence(
     );
   }
 
-
   if (existing) {
     return existing;
   }
 
-
-  // ==========================================================
-  // FIRST STEP
-  // ==========================================================
-
   const {
     data: firstStep,
-    error:
-      firstStepError,
+    error: firstStepError,
   } = await supabase
-    .from(
-      "email_sequence_steps"
-    )
+    .from("email_sequence_steps")
     .select(`
       id,
       step_order,
@@ -252,19 +176,12 @@ export async function enrollLeadInSequence(
       "sequence_id",
       sequenceId
     )
-    .eq(
-      "active",
-      true
-    )
-    .order(
-      "step_order",
-      {
-        ascending: true,
-      }
-    )
+    .eq("active", true)
+    .order("step_order", {
+      ascending: true,
+    })
     .limit(1)
     .maybeSingle();
-
 
   if (
     firstStepError ||
@@ -276,28 +193,20 @@ export async function enrollLeadInSequence(
     );
   }
 
-
-  // ==========================================================
-  // CREATE ENROLLMENT
-  // ==========================================================
-
   const {
     data: enrollment,
-    error:
-      enrollmentError,
+    error: enrollmentError,
   } = await supabase
     .from(
       "email_sequence_enrollments"
     )
     .insert({
-      lead_id:
-        leadId,
+      lead_id: leadId,
 
       sequence_id:
         sequenceId,
 
-      status:
-        "active",
+      status: "active",
 
       current_step:
         firstStep.step_order,
@@ -318,7 +227,6 @@ export async function enrollLeadInSequence(
     `)
     .single();
 
-
   if (
     enrollmentError ||
     !enrollment
@@ -331,10 +239,8 @@ export async function enrollLeadInSequence(
     );
   }
 
-
   return enrollment;
 }
-
 
 async function processEnrollment(
   enrollment: {
@@ -347,11 +253,6 @@ async function processEnrollment(
   const supabase =
     createAdminSupabase();
 
-
-  // ==========================================================
-  // RECHECK LEAD BEFORE EACH EMAIL
-  // ==========================================================
-
   const {
     data: lead,
     error: leadError,
@@ -363,14 +264,14 @@ async function processEnrollment(
       status,
       email_opt_out,
       email_bounced,
-      email_complained
+      email_complained,
+      has_replied
     `)
     .eq(
       "id",
       enrollment.lead_id
     )
     .maybeSingle();
-
 
   if (
     leadError ||
@@ -381,20 +282,17 @@ async function processEnrollment(
     );
 
     return {
-      status:
-        "stopped",
-
-      reason:
-        "lead_missing",
+      status: "stopped",
+      reason: "lead_missing",
     };
   }
-
 
   if (
     !lead.email ||
     lead.email_opt_out ||
     lead.email_bounced ||
     lead.email_complained ||
+    lead.has_replied ||
     STOP_LEAD_STATUSES.has(
       lead.status
     )
@@ -404,18 +302,14 @@ async function processEnrollment(
     );
 
     return {
-      status:
-        "stopped",
+      status: "stopped",
 
       reason:
-        "lead_blocked",
+        lead.has_replied
+          ? "lead_replied"
+          : "lead_blocked",
     };
   }
-
-
-  // ==========================================================
-  // CURRENT STEP
-  // ==========================================================
 
   const {
     data: step,
@@ -437,12 +331,8 @@ async function processEnrollment(
       "step_order",
       enrollment.current_step
     )
-    .eq(
-      "active",
-      true
-    )
+    .eq("active", true)
     .maybeSingle();
-
 
   if (
     stepError ||
@@ -456,34 +346,20 @@ async function processEnrollment(
         "email_sequence_enrollments"
       )
       .update({
-        status:
-          "completed",
-
-        next_send_at:
-          null,
-
-        completed_at:
-          now,
-
-        updated_at:
-          now,
+        status: "completed",
+        next_send_at: null,
+        completed_at: now,
+        updated_at: now,
       })
       .eq(
         "id",
         enrollment.id
       );
 
-
     return {
-      status:
-        "completed",
+      status: "completed",
     };
   }
-
-
-  // ==========================================================
-  // SEND EMAIL
-  // ==========================================================
 
   const sendResult =
     await sendTemplateEmail({
@@ -499,11 +375,6 @@ async function processEnrollment(
       sequenceStepId:
         step.id,
     });
-
-
-  // ==========================================================
-  // FIND NEXT STEP
-  // ==========================================================
 
   const {
     data: nextStep,
@@ -521,34 +392,22 @@ async function processEnrollment(
       "sequence_id",
       enrollment.sequence_id
     )
-    .eq(
-      "active",
-      true
-    )
+    .eq("active", true)
     .gt(
       "step_order",
       step.step_order
     )
-    .order(
-      "step_order",
-      {
-        ascending: true,
-      }
-    )
+    .order("step_order", {
+      ascending: true,
+    })
     .limit(1)
     .maybeSingle();
-
 
   if (nextStepError) {
     throw new Error(
       nextStepError.message
     );
   }
-
-
-  // ==========================================================
-  // COMPLETE SEQUENCE
-  // ==========================================================
 
   if (!nextStep) {
     const now =
@@ -559,40 +418,32 @@ async function processEnrollment(
         "email_sequence_enrollments"
       )
       .update({
-        status:
-          "completed",
+        status: "completed",
 
         current_step:
           step.step_order,
 
-        next_send_at:
-          null,
+        next_send_at: null,
 
-        completed_at:
-          now,
+        completed_at: now,
 
-        updated_at:
-          now,
+        updated_at: now,
       })
       .eq(
         "id",
         enrollment.id
       );
 
-
     return {
-      status:
-        "completed",
-
-      send:
-        sendResult,
+      status: "completed",
+      send: sendResult,
     };
   }
 
-
-  // ==========================================================
-  // SCHEDULE NEXT STEP
-  // ==========================================================
+  const nextSendAt =
+    dateAfterHours(
+      nextStep.delay_hours
+    );
 
   await supabase
     .from(
@@ -603,9 +454,7 @@ async function processEnrollment(
         nextStep.step_order,
 
       next_send_at:
-        dateAfterHours(
-          nextStep.delay_hours
-        ),
+        nextSendAt,
 
       updated_at:
         new Date().toISOString(),
@@ -615,35 +464,23 @@ async function processEnrollment(
       enrollment.id
     );
 
-
   return {
-    status:
-      "sent",
+    status: "sent",
 
     nextStep:
       nextStep.step_order,
 
-    nextSendAt:
-      dateAfterHours(
-        nextStep.delay_hours
-      ),
+    nextSendAt,
 
-    send:
-      sendResult,
+    send: sendResult,
   };
 }
-
-
-// ============================================================
-// PROCESS ONE SPECIFIC ENROLLMENT
-// ============================================================
 
 export async function processEmailEnrollment(
   enrollmentId: string
 ) {
   const supabase =
     createAdminSupabase();
-
 
   const {
     data: enrollment,
@@ -666,7 +503,6 @@ export async function processEmailEnrollment(
     )
     .maybeSingle();
 
-
   if (
     error ||
     !enrollment
@@ -677,7 +513,6 @@ export async function processEmailEnrollment(
     );
   }
 
-
   if (
     enrollment.status !==
     "active"
@@ -686,21 +521,14 @@ export async function processEmailEnrollment(
       status:
         enrollment.status,
 
-      processed:
-        false,
+      processed: false,
     };
   }
-
 
   return processEnrollment(
     enrollment
   );
 }
-
-
-// ============================================================
-// PROCESS ALL DUE EMAILS
-// ============================================================
 
 export async function processDueEmailEnrollments(
   limit = 10
@@ -708,20 +536,14 @@ export async function processDueEmailEnrollments(
   const supabase =
     createAdminSupabase();
 
-
   const safeLimit =
     Math.max(
       1,
-      Math.min(
-        limit,
-        25
-      )
+      Math.min(limit, 25)
     );
-
 
   const now =
     new Date().toISOString();
-
 
   const {
     data: enrollments,
@@ -737,25 +559,12 @@ export async function processDueEmailEnrollments(
       current_step,
       next_send_at
     `)
-    .eq(
-      "status",
-      "active"
-    )
-    .lte(
-      "next_send_at",
-      now
-    )
-    .order(
-      "next_send_at",
-      {
-        ascending:
-          true,
-      }
-    )
-    .limit(
-      safeLimit
-    );
-
+    .eq("status", "active")
+    .lte("next_send_at", now)
+    .order("next_send_at", {
+      ascending: true,
+    })
+    .limit(safeLimit);
 
   if (error) {
     throw new Error(
@@ -763,9 +572,7 @@ export async function processDueEmailEnrollments(
     );
   }
 
-
   const results = [];
-
 
   for (
     const enrollment
@@ -777,33 +584,26 @@ export async function processDueEmailEnrollments(
           enrollment
         );
 
-
       results.push({
         enrollmentId:
           enrollment.id,
 
-        success:
-          true,
+        success: true,
 
         result,
       });
-
-    } catch (
-      error
-    ) {
+    } catch (error) {
       const message =
         error instanceof Error
           ? error.message
           : "Unknown error";
-
 
       await supabase
         .from(
           "email_sequence_enrollments"
         )
         .update({
-          status:
-            "paused",
+          status: "paused",
 
           updated_at:
             new Date().toISOString(),
@@ -813,20 +613,16 @@ export async function processDueEmailEnrollments(
           enrollment.id
         );
 
-
       results.push({
         enrollmentId:
           enrollment.id,
 
-        success:
-          false,
+        success: false,
 
-        error:
-          message,
+        error: message,
       });
     }
   }
-
 
   return {
     processed:
