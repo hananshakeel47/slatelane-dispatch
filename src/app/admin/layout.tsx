@@ -38,6 +38,19 @@ export default function AdminLayout({
           </Link>
 
           <Link
+            href="/admin/replies"
+            className="flex items-center justify-between rounded-lg px-4 py-3 hover:bg-zinc-800"
+          >
+            <span>
+              Replies
+            </span>
+
+            <span className="rounded-full bg-emerald-950 px-2 py-0.5 text-xs text-emerald-300">
+              Inbox
+            </span>
+          </Link>
+
+          <Link
             href="/admin/import"
             className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
           >
@@ -55,7 +68,7 @@ export default function AdminLayout({
 
       </aside>
 
-      <main className="flex-1 p-10">
+      <main className="min-w-0 flex-1 p-10">
         {children}
       </main>
 
