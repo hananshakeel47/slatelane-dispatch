@@ -8,10 +8,11 @@ import {
 const PAGE_SIZE = 50;
 
 
-type SearchParams = Record<
-  string,
-  string | string[] | undefined
->;
+type SearchParams =
+  Record<
+    string,
+    string | string[] | undefined
+  >;
 
 
 type Props = {
@@ -20,20 +21,16 @@ type Props = {
 };
 
 
-function param(
+function getParam(
   params: SearchParams,
   key: string
 ) {
   const value =
     params[key];
 
-  if (
-    Array.isArray(value)
-  ) {
-    return value[0] ?? "";
-  }
-
-  return value ?? "";
+  return Array.isArray(value)
+    ? value[0] ?? ""
+    : value ?? "";
 }
 
 
@@ -42,24 +39,18 @@ function cleanSearch(
 ) {
   return value
     .trim()
-    .replace(
-      /[(),"]/g,
-      " "
-    )
-    .slice(
-      0,
-      120
-    );
+    .replace(/[(),"]/g, " ")
+    .slice(0, 120);
 }
 
 
 function previewText(
   text:
     string | null,
-  maxLength = 180
+  maxLength = 220
 ) {
   if (!text) {
-    return "No text preview available.";
+    return "No reply text available.";
   }
 
   const cleaned =
@@ -95,6 +86,67 @@ function formatDate(
 }
 
 
+function classificationLabel(
+  value:
+    string | null
+) {
+  switch (value) {
+    case "interested":
+      return "Interested";
+
+    case "need_rates":
+      return "Need Rates";
+
+    case "call_me":
+      return "Call Me";
+
+    case "not_interested":
+      return "Not Interested";
+
+    case "wrong_contact":
+      return "Wrong Contact";
+
+    case "unsubscribe":
+      return "Unsubscribe";
+
+    case "other":
+      return "Other";
+
+    default:
+      return "Unclassified";
+  }
+}
+
+
+function classificationClasses(
+  value:
+    string | null
+) {
+  switch (value) {
+    case "interested":
+      return "border-emerald-700 bg-emerald-950 text-emerald-300";
+
+    case "need_rates":
+      return "border-blue-700 bg-blue-950 text-blue-300";
+
+    case "call_me":
+      return "border-purple-700 bg-purple-950 text-purple-300";
+
+    case "not_interested":
+      return "border-red-800 bg-red-950 text-red-300";
+
+    case "wrong_contact":
+      return "border-amber-700 bg-amber-950 text-amber-300";
+
+    case "unsubscribe":
+      return "border-zinc-600 bg-zinc-800 text-zinc-200";
+
+    default:
+      return "border-zinc-700 bg-zinc-900 text-zinc-400";
+  }
+}
+
+
 export default async function RepliesPage({
   searchParams,
 }: Props) {
@@ -104,16 +156,30 @@ export default async function RepliesPage({
 
   const search =
     cleanSearch(
-      param(
+      getParam(
         params,
         "q"
       )
     );
 
 
+  const classification =
+    getParam(
+      params,
+      "classification"
+    );
+
+
+  const attention =
+    getParam(
+      params,
+      "attention"
+    );
+
+
   const rawPage =
     Number(
-      param(
+      getParam(
         params,
         "page"
       )
@@ -149,10 +215,10 @@ export default async function RepliesPage({
 
 
   // ==========================================================
-  // LOAD REPLIES
+  // QUERY
   // ==========================================================
 
-  let replyQuery =
+  let query =
     supabase
       .from(
         "email_replies"
@@ -167,7 +233,12 @@ export default async function RepliesPage({
           text_body,
           attachment_count,
           received_at,
-          created_at
+
+          classification,
+          classification_confidence,
+          classification_reason,
+          classified_at,
+          requires_attention
         `,
         {
           count:
@@ -177,8 +248,8 @@ export default async function RepliesPage({
 
 
   if (search) {
-    replyQuery =
-      replyQuery.or(
+    query =
+      query.or(
         [
           `from_email.ilike.%${search}%`,
           `subject.ilike.%${search}%`,
@@ -188,13 +259,49 @@ export default async function RepliesPage({
   }
 
 
+  if (
+    classification &&
+    classification !==
+      "all"
+  ) {
+    query =
+      query.eq(
+        "classification",
+        classification
+      );
+  }
+
+
+  if (
+    attention ===
+    "yes"
+  ) {
+    query =
+      query.eq(
+        "requires_attention",
+        true
+      );
+  }
+
+
+  if (
+    attention ===
+    "no"
+  ) {
+    query =
+      query.eq(
+        "requires_attention",
+        false
+      );
+  }
+
+
   const {
     data: replies,
-    error:
-      repliesError,
+    error,
     count,
   } =
-    await replyQuery
+    await query
       .order(
         "received_at",
         {
@@ -208,11 +315,16 @@ export default async function RepliesPage({
       );
 
 
+  // ==========================================================
+  // LEADS
+  // ==========================================================
+
   const leadIds =
     [
       ...new Set(
         (
-          replies ?? []
+          replies ??
+          []
         ).map(
           (
             reply
@@ -223,39 +335,21 @@ export default async function RepliesPage({
     ];
 
 
-  // ==========================================================
-  // LOAD MATCHING LEADS
-  // ==========================================================
-
   const leadMap =
     new Map<
       string,
       {
         id: string;
-
         company_name:
           string | null;
-
         name:
           string | null;
-
-        email:
-          string | null;
-
         phone:
           string | null;
-
-        status:
-          string | null;
-
-        reply_count:
-          number | null;
-
-        last_reply_at:
-          string | null;
-
         carrier_dot_number:
           number | null;
+        status:
+          string | null;
       }
     >();
 
@@ -272,12 +366,9 @@ export default async function RepliesPage({
         id,
         company_name,
         name,
-        email,
         phone,
-        status,
-        reply_count,
-        last_reply_at,
-        carrier_dot_number
+        carrier_dot_number,
+        status
       `)
       .in(
         "id",
@@ -313,7 +404,6 @@ export default async function RepliesPage({
       {
         count:
           "exact",
-
         head:
           true,
       }
@@ -330,13 +420,34 @@ export default async function RepliesPage({
       {
         count:
           "exact",
-
         head:
           true,
       }
     )
     .eq(
       "has_replied",
+      true
+    );
+
+
+  const {
+    count:
+      needsAttention,
+  } = await supabase
+    .from(
+      "email_replies"
+    )
+    .select(
+      "id",
+      {
+        count:
+          "exact",
+        head:
+          true,
+      }
+    )
+    .eq(
+      "requires_attention",
       true
     );
 
@@ -353,6 +464,51 @@ export default async function RepliesPage({
         PAGE_SIZE
       )
     );
+
+
+  function pageUrl(
+    targetPage: number
+  ) {
+    const query =
+      new URLSearchParams();
+
+
+    query.set(
+      "page",
+      String(
+        targetPage
+      )
+    );
+
+
+    if (search) {
+      query.set(
+        "q",
+        search
+      );
+    }
+
+
+    if (
+      classification
+    ) {
+      query.set(
+        "classification",
+        classification
+      );
+    }
+
+
+    if (attention) {
+      query.set(
+        "attention",
+        attention
+      );
+    }
+
+
+    return `/admin/replies?${query.toString()}`;
+  }
 
 
   return (
@@ -372,11 +528,12 @@ export default async function RepliesPage({
             Replies
           </h1>
 
-          <p className="mt-2 max-w-2xl text-zinc-400">
-            Carrier responses captured automatically through SlateLane email automation.
+          <p className="mt-2 text-zinc-400">
+            Carrier responses classified automatically by SlateLane.
           </p>
 
         </div>
+
 
         <Link
           href="/admin/leads"
@@ -390,11 +547,11 @@ export default async function RepliesPage({
 
       {/* STATS */}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
 
-          <div className="text-xs uppercase tracking-wider text-zinc-500">
+          <div className="text-xs uppercase text-zinc-500">
             Total Replies
           </div>
 
@@ -410,7 +567,7 @@ export default async function RepliesPage({
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
 
-          <div className="text-xs uppercase tracking-wider text-zinc-500">
+          <div className="text-xs uppercase text-zinc-500">
             Replied Leads
           </div>
 
@@ -426,7 +583,23 @@ export default async function RepliesPage({
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
 
-          <div className="text-xs uppercase tracking-wider text-zinc-500">
+          <div className="text-xs uppercase text-zinc-500">
+            Needs Attention
+          </div>
+
+          <div className="mt-2 text-3xl font-bold text-amber-300">
+            {(
+              needsAttention ??
+              0
+            ).toLocaleString()}
+          </div>
+
+        </div>
+
+
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+
+          <div className="text-xs uppercase text-zinc-500">
             Showing
           </div>
 
@@ -439,14 +612,14 @@ export default async function RepliesPage({
       </div>
 
 
-      {/* SEARCH */}
+      {/* FILTERS */}
 
       <form
         method="GET"
         className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
       >
 
-        <div className="flex flex-col gap-3 md:flex-row">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px_190px_auto_auto]">
 
           <input
             type="text"
@@ -454,45 +627,107 @@ export default async function RepliesPage({
             defaultValue={
               search
             }
-            placeholder="Search sender, subject or reply text..."
-            className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 outline-none placeholder:text-zinc-600 focus:border-zinc-500"
+            placeholder="Search sender, subject or reply..."
+            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 outline-none"
           />
+
+
+          <select
+            name="classification"
+            defaultValue={
+              classification ||
+              "all"
+            }
+            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3"
+          >
+            <option value="all">
+              All classifications
+            </option>
+
+            <option value="interested">
+              Interested
+            </option>
+
+            <option value="need_rates">
+              Need Rates
+            </option>
+
+            <option value="call_me">
+              Call Me
+            </option>
+
+            <option value="not_interested">
+              Not Interested
+            </option>
+
+            <option value="wrong_contact">
+              Wrong Contact
+            </option>
+
+            <option value="unsubscribe">
+              Unsubscribe
+            </option>
+
+            <option value="other">
+              Other
+            </option>
+
+          </select>
+
+
+          <select
+            name="attention"
+            defaultValue={
+              attention ||
+              "all"
+            }
+            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3"
+          >
+            <option value="all">
+              All replies
+            </option>
+
+            <option value="yes">
+              Needs attention
+            </option>
+
+            <option value="no">
+              No attention needed
+            </option>
+
+          </select>
+
 
           <button
             type="submit"
-            className="rounded-xl bg-white px-6 py-3 font-semibold text-black hover:bg-zinc-200"
+            className="rounded-xl bg-white px-6 py-3 font-semibold text-black"
           >
-            Search
+            Filter
           </button>
 
-          {search && (
 
-            <Link
-              href="/admin/replies"
-              className="rounded-xl border border-zinc-700 px-6 py-3 text-center text-zinc-300 hover:bg-zinc-800"
-            >
-              Clear
-            </Link>
-
-          )}
+          <Link
+            href="/admin/replies"
+            className="rounded-xl border border-zinc-700 px-6 py-3 text-center"
+          >
+            Clear
+          </Link>
 
         </div>
 
       </form>
 
 
-      {/* ERROR */}
-
-      {repliesError && (
+      {error && (
 
         <div className="rounded-xl border border-red-900 bg-red-950/40 p-5 text-red-300">
-          {repliesError.message}
+          {error.message}
         </div>
 
       )}
 
 
-      {/* REPLY LIST */}
+      {/* REPLIES */}
 
       <div className="space-y-4">
 
@@ -507,8 +742,9 @@ export default async function RepliesPage({
               );
 
 
-            const leadName =
-              lead?.company_name ||
+            const name =
+              lead
+                ?.company_name ||
               lead?.name ||
               reply.from_email;
 
@@ -523,40 +759,55 @@ export default async function RepliesPage({
                 className="block rounded-2xl border border-zinc-800 bg-zinc-900/55 p-6 transition hover:border-zinc-700 hover:bg-zinc-900"
               >
 
-                <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                <div className="flex flex-col gap-5 xl:flex-row xl:justify-between">
 
                   <div className="min-w-0 flex-1">
 
                     <div className="flex flex-wrap items-center gap-3">
 
-                      <div className="flex h-11 w-11 items-center justify-center rounded-full border border-emerald-800 bg-emerald-950 font-bold text-emerald-300">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full border border-emerald-800 bg-emerald-950 text-emerald-300">
                         ↩
                       </div>
 
 
-                      <div className="min-w-0">
+                      <div>
 
-                        <div className="truncate text-lg font-semibold">
-                          {leadName}
+                        <div className="text-lg font-semibold">
+                          {name}
                         </div>
 
-                        <div className="truncate text-sm text-zinc-500">
+                        <div className="text-sm text-zinc-500">
                           {reply.from_email}
                         </div>
 
                       </div>
 
 
-                      <span className="rounded-full border border-emerald-800 bg-emerald-950 px-3 py-1 text-xs font-semibold text-emerald-300">
-                        Replied
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${classificationClasses(
+                          reply.classification
+                        )}`}
+                      >
+                        {classificationLabel(
+                          reply.classification
+                        )}
                       </span>
+
+
+                      {reply.requires_attention && (
+
+                        <span className="rounded-full border border-amber-800 bg-amber-950 px-3 py-1 text-xs font-semibold text-amber-300">
+                          Needs Attention
+                        </span>
+
+                      )}
 
                     </div>
 
 
                     <div className="mt-5">
 
-                      <div className="font-medium text-zinc-200">
+                      <div className="font-medium">
                         {reply.subject ||
                           "(No subject)"}
                       </div>
@@ -570,9 +821,10 @@ export default async function RepliesPage({
                     </div>
 
 
-                    <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-xs text-zinc-500">
+                    <div className="mt-5 flex flex-wrap gap-4 text-xs text-zinc-500">
 
-                      {lead?.carrier_dot_number && (
+                      {lead
+                        ?.carrier_dot_number && (
 
                         <span>
                           DOT{" "}
@@ -595,6 +847,23 @@ export default async function RepliesPage({
                       )}
 
 
+                      {reply.classification_confidence !==
+                        null && (
+
+                        <span>
+                          Confidence{" "}
+                          {Math.round(
+                            Number(
+                              reply.classification_confidence
+                            ) *
+                              100
+                          )}
+                          %
+                        </span>
+
+                      )}
+
+
                       {(reply.attachment_count ??
                         0) >
                         0 && (
@@ -603,12 +872,7 @@ export default async function RepliesPage({
                           📎{" "}
                           {
                             reply.attachment_count
-                          }{" "}
-                          attachment
-                          {reply.attachment_count ===
-                          1
-                            ? ""
-                            : "s"}
+                          }
                         </span>
 
                       )}
@@ -618,7 +882,7 @@ export default async function RepliesPage({
                   </div>
 
 
-                  <div className="flex shrink-0 flex-col gap-2 xl:items-end">
+                  <div className="shrink-0 xl:text-right">
 
                     <div className="text-sm text-zinc-400">
                       {formatDate(
@@ -626,7 +890,7 @@ export default async function RepliesPage({
                       )}
                     </div>
 
-                    <div className="text-xs font-semibold text-blue-400">
+                    <div className="mt-2 text-xs font-semibold text-blue-400">
                       Open conversation →
                     </div>
 
@@ -641,26 +905,22 @@ export default async function RepliesPage({
         )}
 
 
-        {!repliesError &&
+        {!error &&
           (
             replies?.length ??
             0
           ) ===
             0 && (
 
-          <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/30 p-16 text-center">
+          <div className="rounded-2xl border border-dashed border-zinc-800 p-16 text-center">
 
             <div className="text-4xl">
               📭
             </div>
 
-            <h2 className="mt-4 text-xl font-semibold">
-              No replies found
-            </h2>
-
-            <p className="mt-2 text-zinc-500">
-              Carrier responses will automatically appear here.
-            </p>
+            <div className="mt-4 text-xl font-semibold">
+              No matching replies
+            </div>
 
           </div>
 
@@ -678,16 +938,12 @@ export default async function RepliesPage({
           {page > 1 ? (
 
             <Link
-              href={`/admin/replies?page=${
-                page - 1
-              }${
-                search
-                  ? `&q=${encodeURIComponent(
-                      search
-                    )}`
-                  : ""
-              }`}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 px-5 py-2.5"
+              href={
+                pageUrl(
+                  page - 1
+                )
+              }
+              className="rounded-lg border border-zinc-700 px-5 py-3"
             >
               ← Previous
             </Link>
@@ -707,16 +963,12 @@ export default async function RepliesPage({
           totalPages ? (
 
             <Link
-              href={`/admin/replies?page=${
-                page + 1
-              }${
-                search
-                  ? `&q=${encodeURIComponent(
-                      search
-                    )}`
-                  : ""
-              }`}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 px-5 py-2.5"
+              href={
+                pageUrl(
+                  page + 1
+                )
+              }
+              className="rounded-lg border border-zinc-700 px-5 py-3"
             >
               Next →
             </Link>

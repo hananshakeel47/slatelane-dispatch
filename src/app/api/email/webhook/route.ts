@@ -11,8 +11,14 @@ import {
   getResendClient,
 } from "@/lib/email/resend";
 
+import {
+  classifyReply,
+} from "@/lib/email/classify-reply";
+
+
 export const runtime =
   "nodejs";
+
 
 type ResendWebhookEvent = {
   type: string;
@@ -21,21 +27,11 @@ type ResendWebhookEvent = {
 
   data?: {
     email_id?: string;
-
     message_id?: string;
-
     from?: string;
-
     to?: string[];
-
     subject?: string;
-
     attachments?: unknown[];
-
-    tags?: Record<
-      string,
-      string
-    >;
 
     failed?: {
       reason?: string;
@@ -54,16 +50,24 @@ type ResendWebhookEvent = {
   };
 };
 
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
 export async function GET() {
   return NextResponse.json({
     success: true,
-
     service:
       "SlateLane Resend Webhook",
-
     status: "ready",
   });
 }
+
+
+// ============================================================
+// HELPERS
+// ============================================================
 
 function extractEmailAddress(
   value:
@@ -73,13 +77,13 @@ function extractEmailAddress(
     return null;
   }
 
-  const angleMatch =
+  const match =
     value.match(
       /<([^<>]+@[^<>]+)>/
     );
 
   const email =
-    angleMatch?.[1] ??
+    match?.[1] ??
     value;
 
   const cleaned =
@@ -91,6 +95,7 @@ function extractEmailAddress(
     ? cleaned
     : null;
 }
+
 
 function extractLeadIdFromAddress(
   value:
@@ -113,7 +118,10 @@ function extractLeadIdFromAddress(
   }
 
   const local =
-    email.slice(0, atIndex);
+    email.slice(
+      0,
+      atIndex
+    );
 
   const domain =
     email
@@ -132,8 +140,10 @@ function extractLeadIdFromAddress(
       /^lead-([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
     );
 
-  return match?.[1] ?? null;
+  return match?.[1] ??
+    null;
 }
+
 
 function normalizeHeaders(
   headers:
@@ -142,50 +152,32 @@ function normalizeHeaders(
       string
     > | null | undefined
 ) {
-  const normalized:
+  const output:
     Record<
       string,
       string
     > = {};
 
   if (!headers) {
-    return normalized;
+    return output;
   }
 
   for (
     const [key, value]
     of Object.entries(headers)
   ) {
-    normalized[
+    output[
       key.toLowerCase()
     ] = String(value);
   }
 
-  return normalized;
+  return output;
 }
 
-function extractMessageIds(
-  value:
-    string | null | undefined
-) {
-  if (!value) {
-    return [];
-  }
 
-  const matches =
-    value.match(/<[^<>]+>/g);
-
-  if (
-    matches &&
-    matches.length > 0
-  ) {
-    return matches;
-  }
-
-  return [
-    value.trim(),
-  ].filter(Boolean);
-}
+// ============================================================
+// STOP AUTOMATION
+// ============================================================
 
 async function stopLeadSequences(
   leadId: string
@@ -203,18 +195,28 @@ async function stopLeadSequences(
       "email_sequence_enrollments"
     )
     .update({
-      status: "stopped",
+      status:
+        "stopped",
 
-      stopped_at: now,
+      stopped_at:
+        now,
 
-      next_send_at: null,
+      next_send_at:
+        null,
 
-      updated_at: now,
+      updated_at:
+        now,
     })
-    .eq("lead_id", leadId)
+    .eq(
+      "lead_id",
+      leadId
+    )
     .in(
       "status",
-      ["active", "paused"]
+      [
+        "active",
+        "paused",
+      ]
     );
 
   if (error) {
@@ -225,10 +227,16 @@ async function stopLeadSequences(
   }
 }
 
+
+// ============================================================
+// OUTBOUND BOUNCE / COMPLAINT SUPPRESSION
+// ============================================================
+
 async function suppressLeadEmail(
   leadId: string,
 
-  email: string | null,
+  email:
+    string | null,
 
   reason: string,
 
@@ -242,9 +250,7 @@ async function suppressLeadEmail(
   const now =
     new Date().toISOString();
 
-  const {
-    error: leadUpdateError,
-  } = await supabase
+  await supabase
     .from("leads")
     .update({
       [flag]: true,
@@ -252,45 +258,28 @@ async function suppressLeadEmail(
     })
     .eq("id", leadId);
 
-  if (leadUpdateError) {
-    console.error(
-      "Could not update lead suppression flag:",
-      leadUpdateError.message
-    );
-  }
-
   if (email) {
-    const normalizedEmail =
-      email
-        .trim()
-        .toLowerCase();
-
-    const {
-      error: suppressionError,
-    } = await supabase
+    await supabase
       .from(
         "email_suppressions"
       )
       .upsert(
         {
           email:
-            normalizedEmail,
+            email
+              .trim()
+              .toLowerCase(),
 
           reason,
 
-          source: "resend",
+          source:
+            "resend",
         },
         {
-          onConflict: "email",
+          onConflict:
+            "email",
         }
       );
-
-    if (suppressionError) {
-      console.error(
-        "Could not create suppression:",
-        suppressionError.message
-      );
-    }
   }
 
   await stopLeadSequences(
@@ -298,65 +287,166 @@ async function suppressLeadEmail(
   );
 }
 
-async function findLeadFromThreadHeaders(
-  headers:
-    Record<string, string>
+
+// ============================================================
+// APPLY REPLY CLASSIFICATION TO LEAD
+// ============================================================
+
+async function applyClassificationToLead(
+  lead: {
+    id: string;
+
+    email:
+      string | null;
+
+    reply_count:
+      number | null;
+  },
+
+  classification:
+    ReturnType<
+      typeof classifyReply
+    >,
+
+  receivedAt: string,
+
+  fromEmail: string,
+
+  subject:
+    string | null,
+
+  incrementReplyCount: boolean
 ) {
   const supabase =
     createAdminSupabase();
 
-  const candidates = [
-    ...extractMessageIds(
-      headers["in-reply-to"]
-    ),
+  const now =
+    new Date().toISOString();
 
-    ...extractMessageIds(
-      headers["references"]
-    ),
-  ];
 
-  const uniqueCandidates =
-    [...new Set(candidates)];
+  const update:
+    Record<
+      string,
+      unknown
+    > = {
+    has_replied:
+      true,
 
-  for (
-    const messageId
-    of uniqueCandidates
+    last_reply_at:
+      receivedAt,
+
+    last_reply_from:
+      fromEmail,
+
+    last_reply_subject:
+      subject,
+
+    last_reply_classification:
+      classification.classification,
+
+    reply_requires_attention:
+      classification.requiresAttention,
+
+    updated_at:
+      now,
+  };
+
+
+  if (
+    incrementReplyCount
   ) {
-    const {
-      data: send,
-    } = await supabase
-      .from("email_sends")
-      .select("lead_id")
-      .eq(
-        "message_id",
-        messageId
-      )
-      .not(
-        "lead_id",
-        "is",
-        null
-      )
-      .order(
-        "created_at",
-        {
-          ascending: false,
-        }
-      )
-      .limit(1)
-      .maybeSingle();
+    update.reply_count =
+      (
+        lead.reply_count ??
+        0
+      ) + 1;
+  }
 
-    if (send?.lead_id) {
-      return String(
-        send.lead_id
-      );
+
+  if (
+    classification.leadStatus
+  ) {
+    update.status =
+      classification.leadStatus;
+  }
+
+
+  // ==========================================================
+  // UNSUBSCRIBE AUTOMATICALLY
+  // ==========================================================
+
+  if (
+    classification.classification ===
+    "unsubscribe"
+  ) {
+    update.email_opt_out =
+      true;
+
+    update.unsubscribed_at =
+      now;
+
+
+    if (lead.email) {
+      await supabase
+        .from(
+          "email_suppressions"
+        )
+        .upsert(
+          {
+            email:
+              lead.email
+                .trim()
+                .toLowerCase(),
+
+            reason:
+              "unsubscribe",
+
+            source:
+              "reply_classifier",
+          },
+          {
+            onConflict:
+              "email",
+          }
+        );
     }
   }
 
-  return null;
+
+  const {
+    error,
+  } = await supabase
+    .from("leads")
+    .update(update)
+    .eq(
+      "id",
+      lead.id
+    );
+
+
+  if (error) {
+    throw new Error(
+      `Could not update classified lead: ${error.message}`
+    );
+  }
+
+
+  /*
+   * Any genuine reply stops automated follow-ups.
+   */
+  await stopLeadSequences(
+    lead.id
+  );
 }
 
+
+// ============================================================
+// PROCESS INBOUND EMAIL
+// ============================================================
+
 async function processInboundEmail(
-  event: ResendWebhookEvent
+  event:
+    ResendWebhookEvent
 ) {
   const receivedEmailId =
     event.data?.email_id;
@@ -367,8 +457,10 @@ async function processInboundEmail(
     );
   }
 
+
   const resend =
     getResendClient();
+
 
   const {
     data: received,
@@ -377,7 +469,10 @@ async function processInboundEmail(
     await resend
       .emails
       .receiving
-      .get(receivedEmailId);
+      .get(
+        receivedEmailId
+      );
+
 
   if (
     receiveError ||
@@ -386,24 +481,35 @@ async function processInboundEmail(
     throw new Error(
       `Could not retrieve received email: ${
         receiveError?.message ||
-        "Unknown Resend receiving error."
+        "Unknown error"
       }`
     );
   }
 
+
   const config =
     getEmailConfig();
 
+
   const toAddresses =
-    Array.isArray(received.to)
+    Array.isArray(
+      received.to
+    )
       ? received.to
-      : event.data?.to ?? [];
+      : (
+          event.data?.to ??
+          []
+        );
+
 
   let leadId:
-    string | null = null;
+    string | null =
+    null;
 
   let matchedToAddress:
-    string | null = null;
+    string | null =
+    null;
+
 
   for (
     const address
@@ -416,7 +522,8 @@ async function processInboundEmail(
       );
 
     if (candidate) {
-      leadId = candidate;
+      leadId =
+        candidate;
 
       matchedToAddress =
         extractEmailAddress(
@@ -427,20 +534,6 @@ async function processInboundEmail(
     }
   }
 
-  const headers =
-    normalizeHeaders(
-      received.headers as Record<
-        string,
-        string
-      >
-    );
-
-  if (!leadId) {
-    leadId =
-      await findLeadFromThreadHeaders(
-        headers
-      );
-  }
 
   if (!leadId) {
     console.warn(
@@ -454,8 +547,10 @@ async function processInboundEmail(
     };
   }
 
+
   const supabase =
     createAdminSupabase();
+
 
   const {
     data: lead,
@@ -467,8 +562,12 @@ async function processInboundEmail(
       email,
       reply_count
     `)
-    .eq("id", leadId)
+    .eq(
+      "id",
+      leadId
+    )
     .maybeSingle();
+
 
   if (
     leadError ||
@@ -476,9 +575,10 @@ async function processInboundEmail(
   ) {
     throw new Error(
       leadError?.message ||
-      "Matched inbound lead no longer exists."
+      "Matched lead does not exist."
     );
   }
+
 
   const fromEmail =
     extractEmailAddress(
@@ -486,11 +586,13 @@ async function processInboundEmail(
       event.data?.from
     );
 
+
   if (!fromEmail) {
     throw new Error(
-      "Could not determine inbound sender email address."
+      "Could not determine inbound sender email."
     );
   }
+
 
   const toEmail =
     matchedToAddress ??
@@ -498,21 +600,49 @@ async function processInboundEmail(
       toAddresses[0]
     );
 
+
   if (!toEmail) {
     throw new Error(
-      "Could not determine inbound recipient address."
+      "Could not determine inbound recipient."
     );
   }
+
+
+  const subject =
+    received.subject ??
+    event.data?.subject ??
+    null;
+
+
+  // ==========================================================
+  // CLASSIFY + CLEAN REPLY
+  // ==========================================================
+
+  const classification =
+    classifyReply(
+      received.text ??
+      null,
+      subject
+    );
+
+
+  const replyText =
+    classification.cleanedText ||
+    received.text ||
+    null;
+
 
   const receivedAt =
     received.created_at ??
     event.created_at ??
     new Date().toISOString();
 
-  const inboundMessageId =
+
+  const messageId =
     received.message_id ??
     event.data?.message_id ??
     null;
+
 
   const attachments =
     Array.isArray(
@@ -521,10 +651,31 @@ async function processInboundEmail(
       ? received.attachments
       : [];
 
+
+  const headers =
+    normalizeHeaders(
+      received.headers as
+        Record<
+          string,
+          string
+        >
+    );
+
+
+  const classifiedAt =
+    new Date().toISOString();
+
+
+  // ==========================================================
+  // INSERT REPLY
+  // ==========================================================
+
   const {
-    error: replyInsertError,
+    error: replyError,
   } = await supabase
-    .from("email_replies")
+    .from(
+      "email_replies"
+    )
     .insert({
       lead_id:
         lead.id,
@@ -533,7 +684,7 @@ async function processInboundEmail(
         receivedEmailId,
 
       message_id:
-        inboundMessageId,
+        messageId,
 
       from_email:
         fromEmail,
@@ -541,16 +692,18 @@ async function processInboundEmail(
       to_email:
         toEmail,
 
-      subject:
-        received.subject ??
-        event.data?.subject ??
-        null,
+      subject,
 
+      /*
+       * Store CLEAN text so Gmail quote history disappears
+       * from the CRM interface.
+       */
       text_body:
-        received.text ?? null,
+        replyText,
 
       html_body:
-        received.html ?? null,
+        received.html ??
+        null,
 
       raw_headers:
         headers,
@@ -560,79 +713,144 @@ async function processInboundEmail(
 
       received_at:
         receivedAt,
+
+      classification:
+        classification.classification,
+
+      classification_confidence:
+        classification.confidence,
+
+      classification_reason:
+        classification.reason,
+
+      classified_at:
+        classifiedAt,
+
+      requires_attention:
+        classification.requiresAttention,
     });
 
+
+  // ==========================================================
+  // DUPLICATE / REPLAY
+  //
+  // This lets us replay your OLD test email.received webhooks
+  // and classify the existing replies without increasing
+  // reply_count again.
+  // ==========================================================
+
   if (
-    replyInsertError?.code ===
+    replyError?.code ===
     "23505"
   ) {
+    const {
+      data:
+        existingReply,
+    } = await supabase
+      .from(
+        "email_replies"
+      )
+      .select(
+        "id"
+      )
+      .eq(
+        "resend_received_email_id",
+        receivedEmailId
+      )
+      .maybeSingle();
+
+
+    if (
+      existingReply
+    ) {
+      await supabase
+        .from(
+          "email_replies"
+        )
+        .update({
+          text_body:
+            replyText,
+
+          classification:
+            classification.classification,
+
+          classification_confidence:
+            classification.confidence,
+
+          classification_reason:
+            classification.reason,
+
+          classified_at:
+            classifiedAt,
+
+          requires_attention:
+            classification.requiresAttention,
+        })
+        .eq(
+          "id",
+          existingReply.id
+        );
+
+
+      await applyClassificationToLead(
+        lead,
+        classification,
+        receivedAt,
+        fromEmail,
+        subject,
+        false
+      );
+    }
+
+
     return {
       matched: true,
-
       duplicate: true,
-
+      classified:
+        classification.classification,
       leadId:
         lead.id,
-
       receivedEmailId,
     };
   }
 
-  if (replyInsertError) {
+
+  if (replyError) {
     throw new Error(
-      `Could not save inbound reply: ${replyInsertError.message}`
+      `Could not save inbound reply: ${replyError.message}`
     );
   }
 
-  const now =
-    new Date().toISOString();
 
-  const nextReplyCount =
-    (lead.reply_count ?? 0) + 1;
+  // ==========================================================
+  // UPDATE LEAD + STOP AUTOMATION
+  // ==========================================================
 
-  const {
-    error: leadUpdateError,
-  } = await supabase
-    .from("leads")
-    .update({
-      has_replied: true,
-
-      reply_count:
-        nextReplyCount,
-
-      last_reply_at:
-        receivedAt,
-
-      last_reply_from:
-        fromEmail,
-
-      last_reply_subject:
-        received.subject ??
-        event.data?.subject ??
-        null,
-
-      updated_at: now,
-    })
-    .eq("id", lead.id);
-
-  if (leadUpdateError) {
-    throw new Error(
-      `Could not update replied lead: ${leadUpdateError.message}`
-    );
-  }
-
-  await stopLeadSequences(
-    lead.id
+  await applyClassificationToLead(
+    lead,
+    classification,
+    receivedAt,
+    fromEmail,
+    subject,
+    true
   );
+
 
   console.log(
-    `Inbound reply stored. Lead ${lead.id} automation stopped.`
+    `Reply classified: ${classification.classification} for lead ${lead.id}`
   );
+
 
   return {
     matched: true,
 
     duplicate: false,
+
+    classified:
+      classification.classification,
+
+    confidence:
+      classification.confidence,
 
     leadId:
       lead.id,
@@ -640,6 +858,11 @@ async function processInboundEmail(
     receivedEmailId,
   };
 }
+
+
+// ============================================================
+// POST WEBHOOK
+// ============================================================
 
 export async function POST(
   request: Request
@@ -649,15 +872,11 @@ export async function POST(
       process.env
         .RESEND_WEBHOOK_SECRET;
 
-    if (!webhookSecret) {
-      console.error(
-        "RESEND_WEBHOOK_SECRET is missing."
-      );
 
+    if (!webhookSecret) {
       return NextResponse.json(
         {
           success: false,
-
           message:
             "Webhook secret is not configured.",
         },
@@ -667,8 +886,10 @@ export async function POST(
       );
     }
 
+
     const payload =
       await request.text();
+
 
     const svixId =
       request.headers.get(
@@ -685,6 +906,7 @@ export async function POST(
         "svix-signature"
       );
 
+
     if (
       !svixId ||
       !svixTimestamp ||
@@ -693,7 +915,6 @@ export async function POST(
       return NextResponse.json(
         {
           success: false,
-
           message:
             "Missing webhook signature headers.",
         },
@@ -703,19 +924,23 @@ export async function POST(
       );
     }
 
+
     let event:
       ResendWebhookEvent;
+
 
     try {
       const resend =
         getResendClient();
+
 
       event =
         resend.webhooks.verify({
           payload,
 
           headers: {
-            id: svixId,
+            id:
+              svixId,
 
             timestamp:
               svixTimestamp,
@@ -725,17 +950,18 @@ export async function POST(
           },
 
           webhookSecret,
-        }) as ResendWebhookEvent;
+        }) as
+          ResendWebhookEvent;
+
     } catch (error) {
       console.error(
-        "Invalid Resend webhook signature:",
+        "Invalid webhook signature:",
         error
       );
 
       return NextResponse.json(
         {
           success: false,
-
           message:
             "Invalid webhook signature.",
         },
@@ -745,15 +971,23 @@ export async function POST(
       );
     }
 
+
     const supabase =
       createAdminSupabase();
+
 
     const resendEmailId =
       event.data?.email_id ??
       null;
 
+
+    // ========================================================
+    // STORE WEBHOOK
+    // ========================================================
+
     const {
-      error: webhookInsertError,
+      error:
+        webhookInsertError,
     } = await supabase
       .from(
         "email_webhook_events"
@@ -768,35 +1002,30 @@ export async function POST(
         resend_email_id:
           resendEmailId,
 
-        payload: event,
+        payload:
+          event,
       });
+
 
     const duplicateWebhook =
       webhookInsertError?.code ===
       "23505";
 
+
     if (
       webhookInsertError &&
       !duplicateWebhook
     ) {
-      console.error(
-        "Could not save webhook event:",
+      throw new Error(
         webhookInsertError.message
-      );
-
-      return NextResponse.json(
-        {
-          success: false,
-
-          message:
-            "Could not store webhook event.",
-        },
-        {
-          status: 500,
-        }
       );
     }
 
+
+    /*
+     * email.received is intentionally allowed through again
+     * when replayed so existing replies can be classified.
+     */
     if (
       duplicateWebhook &&
       event.type !==
@@ -807,6 +1036,11 @@ export async function POST(
         duplicate: true,
       });
     }
+
+
+    // ========================================================
+    // INBOUND REPLY
+    // ========================================================
 
     if (
       event.type ===
@@ -819,30 +1053,33 @@ export async function POST(
 
       return NextResponse.json({
         success: true,
-
         type:
           "email.received",
-
         ...result,
       });
     }
 
+
     if (!resendEmailId) {
       return NextResponse.json({
         success: true,
-
         ignored: true,
-
-        reason:
-          "No email_id in event.",
       });
     }
 
+
+    // ========================================================
+    // FIND OUTBOUND SEND
+    // ========================================================
+
     const {
       data: send,
-      error: sendLookupError,
+      error:
+        sendLookupError,
     } = await supabase
-      .from("email_sends")
+      .from(
+        "email_sends"
+      )
       .select(`
         id,
         lead_id,
@@ -855,24 +1092,13 @@ export async function POST(
       )
       .maybeSingle();
 
+
     if (sendLookupError) {
-      console.error(
-        "Could not locate email send:",
+      throw new Error(
         sendLookupError.message
       );
-
-      return NextResponse.json(
-        {
-          success: false,
-
-          message:
-            "Email lookup failed.",
-        },
-        {
-          status: 500,
-        }
-      );
     }
+
 
     if (!send) {
       return NextResponse.json({
@@ -881,55 +1107,70 @@ export async function POST(
       });
     }
 
+
     const eventTime =
       event.created_at ??
       new Date().toISOString();
 
-    const updatedAt =
+    const now =
       new Date().toISOString();
 
     const messageId =
       event.data?.message_id ??
       null;
 
+
+    // ========================================================
+    // SENT
+    // ========================================================
+
     if (
       event.type ===
       "email.sent"
     ) {
-      if (
-        [
-          "queued",
-          "sending",
-          "sent",
-        ].includes(send.status)
-      ) {
-        await supabase
-          .from("email_sends")
-          .update({
-            status: "sent",
+      await supabase
+        .from(
+          "email_sends"
+        )
+        .update({
+          status:
+            "sent",
 
-            sent_at: eventTime,
+          sent_at:
+            eventTime,
 
-            ...(messageId
-              ? {
-                  message_id:
-                    messageId,
-                }
-              : {}),
+          ...(messageId
+            ? {
+                message_id:
+                  messageId,
+              }
+            : {}),
 
-            updated_at:
-              updatedAt,
-          })
-          .eq("id", send.id);
-      }
-    } else if (
+          updated_at:
+            now,
+        })
+        .eq(
+          "id",
+          send.id
+        );
+    }
+
+
+    // ========================================================
+    // DELIVERED
+    // ========================================================
+
+    else if (
       event.type ===
       "email.delivered"
     ) {
       await supabase
-        .from("email_sends")
+        .from(
+          "email_sends"
+        )
         .update({
-          status: "delivered",
+          status:
+            "delivered",
 
           delivered_at:
             eventTime,
@@ -942,43 +1183,56 @@ export async function POST(
             : {}),
 
           updated_at:
-            updatedAt,
+            now,
         })
-        .eq("id", send.id);
-    } else if (
+        .eq(
+          "id",
+          send.id
+        );
+    }
+
+
+    // ========================================================
+    // BOUNCED
+    // ========================================================
+
+    else if (
       event.type ===
       "email.bounced"
     ) {
-      const bounceMessage =
+      const reason =
         event.data
           ?.bounce
           ?.message ||
-        "Email permanently bounced.";
+        "Email bounced.";
+
 
       await supabase
-        .from("email_sends")
+        .from(
+          "email_sends"
+        )
         .update({
-          status: "bounced",
+          status:
+            "bounced",
 
           bounced_at:
             eventTime,
 
           error_message:
-            bounceMessage,
-
-          ...(messageId
-            ? {
-                message_id:
-                  messageId,
-              }
-            : {}),
+            reason,
 
           updated_at:
-            updatedAt,
+            now,
         })
-        .eq("id", send.id);
+        .eq(
+          "id",
+          send.id
+        );
 
-      if (send.lead_id) {
+
+      if (
+        send.lead_id
+      ) {
         await suppressLeadEmail(
           send.lead_id,
           send.to_email,
@@ -986,12 +1240,21 @@ export async function POST(
           "email_bounced"
         );
       }
-    } else if (
+    }
+
+
+    // ========================================================
+    // COMPLAINT
+    // ========================================================
+
+    else if (
       event.type ===
       "email.complained"
     ) {
       await supabase
-        .from("email_sends")
+        .from(
+          "email_sends"
+        )
         .update({
           status:
             "complained",
@@ -1000,21 +1263,20 @@ export async function POST(
             eventTime,
 
           error_message:
-            "Recipient marked the message as spam.",
-
-          ...(messageId
-            ? {
-                message_id:
-                  messageId,
-              }
-            : {}),
+            "Recipient marked the email as spam.",
 
           updated_at:
-            updatedAt,
+            now,
         })
-        .eq("id", send.id);
+        .eq(
+          "id",
+          send.id
+        );
 
-      if (send.lead_id) {
+
+      if (
+        send.lead_id
+      ) {
         await suppressLeadEmail(
           send.lead_id,
           send.to_email,
@@ -1022,120 +1284,95 @@ export async function POST(
           "email_complained"
         );
       }
-    } else if (
+    }
+
+
+    // ========================================================
+    // FAILED
+    // ========================================================
+
+    else if (
       event.type ===
       "email.failed"
     ) {
-      if (
-        ![
-          "delivered",
-          "bounced",
-          "complained",
-        ].includes(send.status)
-      ) {
-        const failureReason =
-          event.data
-            ?.failed
-            ?.reason ||
-          "Resend reported an email failure.";
-
-        await supabase
-          .from("email_sends")
-          .update({
-            status: "failed",
-
-            failed_at:
-              eventTime,
-
-            error_message:
-              failureReason,
-
-            ...(messageId
-              ? {
-                  message_id:
-                    messageId,
-                }
-              : {}),
-
-            updated_at:
-              updatedAt,
-          })
-          .eq("id", send.id);
-      }
-    } else if (
-      event.type ===
-      "email.suppressed"
-    ) {
-      const suppressionReason =
-        event.data
-          ?.suppressed
-          ?.message ||
-        "Email was suppressed by Resend.";
-
       await supabase
-        .from("email_sends")
+        .from(
+          "email_sends"
+        )
         .update({
-          status: "suppressed",
+          status:
+            "failed",
 
           failed_at:
             eventTime,
 
           error_message:
-            suppressionReason,
-
-          ...(messageId
-            ? {
-                message_id:
-                  messageId,
-              }
-            : {}),
+            event.data
+              ?.failed
+              ?.reason ||
+            "Resend reported failure.",
 
           updated_at:
-            updatedAt,
+            now,
         })
-        .eq("id", send.id);
+        .eq(
+          "id",
+          send.id
+        );
+    }
 
-      if (send.to_email) {
-        await supabase
-          .from(
-            "email_suppressions"
-          )
-          .upsert(
-            {
-              email:
-                send.to_email
-                  .trim()
-                  .toLowerCase(),
 
-              reason:
-                "resend_suppression",
+    // ========================================================
+    // SUPPRESSED
+    // ========================================================
 
-              source:
-                "resend",
-            },
-            {
-              onConflict: "email",
-            }
-          );
-      }
+    else if (
+      event.type ===
+      "email.suppressed"
+    ) {
+      await supabase
+        .from(
+          "email_sends"
+        )
+        .update({
+          status:
+            "suppressed",
 
-      if (send.lead_id) {
+          failed_at:
+            eventTime,
+
+          error_message:
+            event.data
+              ?.suppressed
+              ?.message ||
+            "Email suppressed.",
+
+          updated_at:
+            now,
+        })
+        .eq(
+          "id",
+          send.id
+        );
+
+
+      if (
+        send.lead_id
+      ) {
         await stopLeadSequences(
           send.lead_id
         );
       }
     }
 
+
     return NextResponse.json({
       success: true,
-
       event:
         event.type,
-
       tracked: true,
-
-      resendEmailId,
     });
+
   } catch (error) {
     console.error(
       "RESEND WEBHOOK ERROR:",
