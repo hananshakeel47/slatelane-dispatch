@@ -4,6 +4,10 @@ import {
   createServerSupabase,
 } from "@/lib/supabase/server";
 
+import {
+  handleReplyAction,
+} from "./actions";
+
 
 const PAGE_SIZE = 50;
 
@@ -28,7 +32,9 @@ function getParam(
   const value =
     params[key];
 
-  return Array.isArray(value)
+  return Array.isArray(
+    value
+  )
     ? value[0] ?? ""
     : value ?? "";
 }
@@ -39,8 +45,14 @@ function cleanSearch(
 ) {
   return value
     .trim()
-    .replace(/[(),"]/g, " ")
-    .slice(0, 120);
+    .replace(
+      /[(),"]/g,
+      " "
+    )
+    .slice(
+      0,
+      120
+    );
 }
 
 
@@ -55,7 +67,10 @@ function previewText(
 
   const cleaned =
     text
-      .replace(/\s+/g, " ")
+      .replace(
+        /\s+/g,
+        " "
+      )
       .trim();
 
   if (
@@ -147,6 +162,38 @@ function classificationClasses(
 }
 
 
+function actionLabel(
+  value:
+    string | null
+) {
+  switch (value) {
+    case "handled":
+      return "Handled";
+
+    case "call_lead":
+      return "Call Lead";
+
+    case "sent_rates":
+      return "Sent Rates";
+
+    case "interested":
+      return "Interested";
+
+    case "not_interested":
+      return "Not Interested";
+
+    case "wrong_contact":
+      return "Wrong Contact";
+
+    case "unsubscribe":
+      return "Unsubscribed";
+
+    default:
+      return "Handled";
+  }
+}
+
+
 export default async function RepliesPage({
   searchParams,
 }: Props) {
@@ -170,10 +217,10 @@ export default async function RepliesPage({
     );
 
 
-  const attention =
+  const handling =
     getParam(
       params,
-      "attention"
+      "handling"
     );
 
 
@@ -215,7 +262,7 @@ export default async function RepliesPage({
 
 
   // ==========================================================
-  // QUERY
+  // REPLIES QUERY
   // ==========================================================
 
   let query =
@@ -237,8 +284,13 @@ export default async function RepliesPage({
           classification,
           classification_confidence,
           classification_reason,
-          classified_at,
-          requires_attention
+
+          requires_attention,
+
+          handled,
+          handled_at,
+          handled_action,
+          handled_note
         `,
         {
           count:
@@ -273,25 +325,30 @@ export default async function RepliesPage({
 
 
   if (
-    attention ===
-    "yes"
+    handling ===
+    "open"
   ) {
     query =
-      query.eq(
-        "requires_attention",
-        true
-      );
+      query
+        .eq(
+          "handled",
+          false
+        )
+        .eq(
+          "requires_attention",
+          true
+        );
   }
 
 
   if (
-    attention ===
-    "no"
+    handling ===
+    "handled"
   ) {
     query =
       query.eq(
-        "requires_attention",
-        false
+        "handled",
+        true
       );
   }
 
@@ -340,14 +397,19 @@ export default async function RepliesPage({
       string,
       {
         id: string;
+
         company_name:
           string | null;
+
         name:
           string | null;
+
         phone:
           string | null;
+
         carrier_dot_number:
           number | null;
+
         status:
           string | null;
       }
@@ -389,7 +451,7 @@ export default async function RepliesPage({
 
 
   // ==========================================================
-  // STATS
+  // DASHBOARD COUNTERS
   // ==========================================================
 
   const {
@@ -404,6 +466,7 @@ export default async function RepliesPage({
       {
         count:
           "exact",
+
         head:
           true,
       }
@@ -420,6 +483,7 @@ export default async function RepliesPage({
       {
         count:
           "exact",
+
         head:
           true,
       }
@@ -432,7 +496,7 @@ export default async function RepliesPage({
 
   const {
     count:
-      needsAttention,
+      openTasks,
   } = await supabase
     .from(
       "email_replies"
@@ -442,6 +506,7 @@ export default async function RepliesPage({
       {
         count:
           "exact",
+
         head:
           true,
       }
@@ -449,11 +514,39 @@ export default async function RepliesPage({
     .eq(
       "requires_attention",
       true
+    )
+    .eq(
+      "handled",
+      false
+    );
+
+
+  const {
+    count:
+      handledCount,
+  } = await supabase
+    .from(
+      "email_replies"
+    )
+    .select(
+      "id",
+      {
+        count:
+          "exact",
+
+        head:
+          true,
+      }
+    )
+    .eq(
+      "handled",
+      true
     );
 
 
   const total =
-    count ?? 0;
+    count ??
+    0;
 
 
   const totalPages =
@@ -467,13 +560,14 @@ export default async function RepliesPage({
 
 
   function pageUrl(
-    targetPage: number
+    targetPage:
+      number
   ) {
-    const query =
+    const params =
       new URLSearchParams();
 
 
-    query.set(
+    params.set(
       "page",
       String(
         targetPage
@@ -482,7 +576,7 @@ export default async function RepliesPage({
 
 
     if (search) {
-      query.set(
+      params.set(
         "q",
         search
       );
@@ -492,22 +586,22 @@ export default async function RepliesPage({
     if (
       classification
     ) {
-      query.set(
+      params.set(
         "classification",
         classification
       );
     }
 
 
-    if (attention) {
-      query.set(
-        "attention",
-        attention
+    if (handling) {
+      params.set(
+        "handling",
+        handling
       );
     }
 
 
-    return `/admin/replies?${query.toString()}`;
+    return `/admin/replies?${params.toString()}`;
   }
 
 
@@ -521,7 +615,7 @@ export default async function RepliesPage({
         <div>
 
           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-400">
-            Email Inbox
+            Sales Inbox
           </div>
 
           <h1 className="text-4xl font-bold">
@@ -529,7 +623,7 @@ export default async function RepliesPage({
           </h1>
 
           <p className="mt-2 text-zinc-400">
-            Carrier responses classified automatically by SlateLane.
+            Review carrier replies and move each response through the sales workflow.
           </p>
 
         </div>
@@ -551,7 +645,7 @@ export default async function RepliesPage({
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
 
-          <div className="text-xs uppercase text-zinc-500">
+          <div className="text-xs uppercase tracking-wide text-zinc-500">
             Total Replies
           </div>
 
@@ -567,7 +661,7 @@ export default async function RepliesPage({
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
 
-          <div className="text-xs uppercase text-zinc-500">
+          <div className="text-xs uppercase tracking-wide text-zinc-500">
             Replied Leads
           </div>
 
@@ -581,15 +675,15 @@ export default async function RepliesPage({
         </div>
 
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+        <div className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-5">
 
-          <div className="text-xs uppercase text-zinc-500">
-            Needs Attention
+          <div className="text-xs uppercase tracking-wide text-amber-500">
+            Open Tasks
           </div>
 
           <div className="mt-2 text-3xl font-bold text-amber-300">
             {(
-              needsAttention ??
+              openTasks ??
               0
             ).toLocaleString()}
           </div>
@@ -599,12 +693,15 @@ export default async function RepliesPage({
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
 
-          <div className="text-xs uppercase text-zinc-500">
-            Showing
+          <div className="text-xs uppercase tracking-wide text-zinc-500">
+            Handled
           </div>
 
-          <div className="mt-2 text-3xl font-bold">
-            {total.toLocaleString()}
+          <div className="mt-2 text-3xl font-bold text-blue-300">
+            {(
+              handledCount ??
+              0
+            ).toLocaleString()}
           </div>
 
         </div>
@@ -619,7 +716,7 @@ export default async function RepliesPage({
         className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
       >
 
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px_190px_auto_auto]">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_210px_180px_auto_auto]">
 
           <input
             type="text"
@@ -640,6 +737,7 @@ export default async function RepliesPage({
             }
             className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3"
           >
+
             <option value="all">
               All classifications
             </option>
@@ -676,23 +774,24 @@ export default async function RepliesPage({
 
 
           <select
-            name="attention"
+            name="handling"
             defaultValue={
-              attention ||
+              handling ||
               "all"
             }
             className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3"
           >
+
             <option value="all">
               All replies
             </option>
 
-            <option value="yes">
-              Needs attention
+            <option value="open">
+              Open tasks
             </option>
 
-            <option value="no">
-              No attention needed
+            <option value="handled">
+              Handled
             </option>
 
           </select>
@@ -718,6 +817,8 @@ export default async function RepliesPage({
       </form>
 
 
+      {/* ERROR */}
+
       {error && (
 
         <div className="rounded-xl border border-red-900 bg-red-950/40 p-5 text-red-300">
@@ -727,9 +828,9 @@ export default async function RepliesPage({
       )}
 
 
-      {/* REPLIES */}
+      {/* REPLY CARDS */}
 
-      <div className="space-y-4">
+      <div className="space-y-5">
 
         {replies?.map(
           (
@@ -743,23 +844,23 @@ export default async function RepliesPage({
 
 
             const name =
-              lead
-                ?.company_name ||
+              lead?.company_name ||
               lead?.name ||
               reply.from_email;
 
 
             return (
 
-              <Link
+              <div
                 key={
                   reply.id
                 }
-                href={`/admin/leads/${reply.lead_id}`}
-                className="block rounded-2xl border border-zinc-800 bg-zinc-900/55 p-6 transition hover:border-zinc-700 hover:bg-zinc-900"
+                className="rounded-2xl border border-zinc-800 bg-zinc-900/55 p-6"
               >
 
-                <div className="flex flex-col gap-5 xl:flex-row xl:justify-between">
+                {/* TOP */}
+
+                <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
 
                   <div className="min-w-0 flex-1">
 
@@ -794,16 +895,27 @@ export default async function RepliesPage({
                       </span>
 
 
-                      {reply.requires_attention && (
+                      {reply.handled ? (
+
+                        <span className="rounded-full border border-blue-800 bg-blue-950 px-3 py-1 text-xs font-semibold text-blue-300">
+                          ✓{" "}
+                          {actionLabel(
+                            reply.handled_action
+                          )}
+                        </span>
+
+                      ) : reply.requires_attention ? (
 
                         <span className="rounded-full border border-amber-800 bg-amber-950 px-3 py-1 text-xs font-semibold text-amber-300">
                           Needs Attention
                         </span>
 
-                      )}
+                      ) : null}
 
                     </div>
 
+
+                    {/* MESSAGE */}
 
                     <div className="mt-5">
 
@@ -820,6 +932,8 @@ export default async function RepliesPage({
 
                     </div>
 
+
+                    {/* META */}
 
                     <div className="mt-5 flex flex-wrap gap-4 text-xs text-zinc-500">
 
@@ -864,20 +978,35 @@ export default async function RepliesPage({
                       )}
 
 
-                      {(reply.attachment_count ??
-                        0) >
-                        0 && (
+                      {reply.handled_at && (
 
                         <span>
-                          📎{" "}
-                          {
-                            reply.attachment_count
-                          }
+                          Handled{" "}
+                          {formatDate(
+                            reply.handled_at
+                          )}
                         </span>
 
                       )}
 
                     </div>
+
+
+                    {reply.handled_note && (
+
+                      <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-3 text-sm text-zinc-400">
+
+                        <span className="font-semibold text-zinc-300">
+                          Internal note:
+                        </span>{" "}
+
+                        {
+                          reply.handled_note
+                        }
+
+                      </div>
+
+                    )}
 
                   </div>
 
@@ -890,15 +1019,136 @@ export default async function RepliesPage({
                       )}
                     </div>
 
-                    <div className="mt-2 text-xs font-semibold text-blue-400">
+                    <Link
+                      href={`/admin/leads/${reply.lead_id}`}
+                      className="mt-2 inline-block text-xs font-semibold text-blue-400 hover:text-blue-300"
+                    >
                       Open conversation →
-                    </div>
+                    </Link>
 
                   </div>
 
                 </div>
 
-              </Link>
+
+                {/* SALES ACTIONS */}
+
+                {!reply.handled && (
+
+                  <form
+                    action={
+                      handleReplyAction
+                    }
+                    className="mt-6 border-t border-zinc-800 pt-5"
+                  >
+
+                    <input
+                      type="hidden"
+                      name="replyId"
+                      value={
+                        reply.id
+                      }
+                    />
+
+                    <input
+                      type="hidden"
+                      name="leadId"
+                      value={
+                        reply.lead_id
+                      }
+                    />
+
+
+                    <div className="flex flex-col gap-3">
+
+                      <input
+                        type="text"
+                        name="note"
+                        placeholder="Optional internal note..."
+                        className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm outline-none placeholder:text-zinc-600"
+                      />
+
+
+                      <div className="flex flex-wrap gap-2">
+
+                        <button
+                          type="submit"
+                          name="action"
+                          value="handled"
+                          className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-semibold hover:bg-zinc-700"
+                        >
+                          ✓ Mark Handled
+                        </button>
+
+
+                        <button
+                          type="submit"
+                          name="action"
+                          value="interested"
+                          className="rounded-lg border border-emerald-800 bg-emerald-950 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-900"
+                        >
+                          Interested
+                        </button>
+
+
+                        <button
+                          type="submit"
+                          name="action"
+                          value="call_lead"
+                          className="rounded-lg border border-purple-800 bg-purple-950 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-900"
+                        >
+                          Call Lead
+                        </button>
+
+
+                        <button
+                          type="submit"
+                          name="action"
+                          value="sent_rates"
+                          className="rounded-lg border border-blue-800 bg-blue-950 px-4 py-2 text-sm font-semibold text-blue-300 hover:bg-blue-900"
+                        >
+                          Sent Rates
+                        </button>
+
+
+                        <button
+                          type="submit"
+                          name="action"
+                          value="not_interested"
+                          className="rounded-lg border border-red-900 bg-red-950 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-900"
+                        >
+                          Not Interested
+                        </button>
+
+
+                        <button
+                          type="submit"
+                          name="action"
+                          value="wrong_contact"
+                          className="rounded-lg border border-amber-800 bg-amber-950 px-4 py-2 text-sm font-semibold text-amber-300 hover:bg-amber-900"
+                        >
+                          Wrong Contact
+                        </button>
+
+
+                        <button
+                          type="submit"
+                          name="action"
+                          value="unsubscribe"
+                          className="rounded-lg border border-zinc-600 bg-black px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-zinc-800"
+                        >
+                          Unsubscribe
+                        </button>
+
+                      </div>
+
+                    </div>
+
+                  </form>
+
+                )}
+
+              </div>
 
             );
           }
