@@ -32,9 +32,7 @@ function getParam(
   const value =
     params[key];
 
-  return Array.isArray(
-    value
-  )
+  return Array.isArray(value)
     ? value[0] ?? ""
     : value ?? "";
 }
@@ -45,20 +43,13 @@ function cleanSearch(
 ) {
   return value
     .trim()
-    .replace(
-      /[(),"]/g,
-      " "
-    )
-    .slice(
-      0,
-      120
-    );
+    .replace(/[(),"]/g, " ")
+    .slice(0, 120);
 }
 
 
 function previewText(
-  text:
-    string | null,
+  text: string | null,
   maxLength = 220
 ) {
   if (!text) {
@@ -67,10 +58,7 @@ function previewText(
 
   const cleaned =
     text
-      .replace(
-        /\s+/g,
-        " "
-      )
+      .replace(/\s+/g, " ")
       .trim();
 
   if (
@@ -88,8 +76,7 @@ function previewText(
 
 
 function formatDate(
-  value:
-    string | null
+  value: string | null
 ) {
   if (!value) {
     return "—";
@@ -102,8 +89,7 @@ function formatDate(
 
 
 function classificationLabel(
-  value:
-    string | null
+  value: string | null
 ) {
   switch (value) {
     case "interested":
@@ -134,8 +120,7 @@ function classificationLabel(
 
 
 function classificationClasses(
-  value:
-    string | null
+  value: string | null
 ) {
   switch (value) {
     case "interested":
@@ -163,8 +148,7 @@ function classificationClasses(
 
 
 function actionLabel(
-  value:
-    string | null
+  value: string | null
 ) {
   switch (value) {
     case "handled":
@@ -293,8 +277,7 @@ export default async function RepliesPage({
           handled_note
         `,
         {
-          count:
-            "exact",
+          count: "exact",
         }
       );
 
@@ -313,8 +296,7 @@ export default async function RepliesPage({
 
   if (
     classification &&
-    classification !==
-      "all"
+    classification !== "all"
   ) {
     query =
       query.eq(
@@ -325,8 +307,7 @@ export default async function RepliesPage({
 
 
   if (
-    handling ===
-    "open"
+    handling === "open"
   ) {
     query =
       query
@@ -342,8 +323,7 @@ export default async function RepliesPage({
 
 
   if (
-    handling ===
-    "handled"
+    handling === "handled"
   ) {
     query =
       query.eq(
@@ -362,8 +342,7 @@ export default async function RepliesPage({
       .order(
         "received_at",
         {
-          ascending:
-            false,
+          ascending: false,
         }
       )
       .range(
@@ -417,8 +396,7 @@ export default async function RepliesPage({
 
 
   if (
-    leadIds.length >
-    0
+    leadIds.length > 0
   ) {
     const {
       data: leads,
@@ -455,8 +433,7 @@ export default async function RepliesPage({
   // ==========================================================
 
   const {
-    count:
-      totalReplies,
+    count: totalReplies,
   } = await supabase
     .from(
       "email_replies"
@@ -464,28 +441,21 @@ export default async function RepliesPage({
     .select(
       "id",
       {
-        count:
-          "exact",
-
-        head:
-          true,
+        count: "exact",
+        head: true,
       }
     );
 
 
   const {
-    count:
-      repliedLeads,
+    count: repliedLeads,
   } = await supabase
     .from("leads")
     .select(
       "id",
       {
-        count:
-          "exact",
-
-        head:
-          true,
+        count: "exact",
+        head: true,
       }
     )
     .eq(
@@ -495,8 +465,7 @@ export default async function RepliesPage({
 
 
   const {
-    count:
-      openTasks,
+    count: openTasks,
   } = await supabase
     .from(
       "email_replies"
@@ -504,11 +473,8 @@ export default async function RepliesPage({
     .select(
       "id",
       {
-        count:
-          "exact",
-
-        head:
-          true,
+        count: "exact",
+        head: true,
       }
     )
     .eq(
@@ -522,8 +488,7 @@ export default async function RepliesPage({
 
 
   const {
-    count:
-      handledCount,
+    count: handledCount,
   } = await supabase
     .from(
       "email_replies"
@@ -531,11 +496,8 @@ export default async function RepliesPage({
     .select(
       "id",
       {
-        count:
-          "exact",
-
-        head:
-          true,
+        count: "exact",
+        head: true,
       }
     )
     .eq(
@@ -545,8 +507,7 @@ export default async function RepliesPage({
 
 
   const total =
-    count ??
-    0;
+    count ?? 0;
 
 
   const totalPages =
@@ -560,8 +521,7 @@ export default async function RepliesPage({
 
 
   function pageUrl(
-    targetPage:
-      number
+    targetPage: number
   ) {
     const params =
       new URLSearchParams();
@@ -858,8 +818,6 @@ export default async function RepliesPage({
                 className="rounded-2xl border border-zinc-800 bg-zinc-900/55 p-6"
               >
 
-                {/* TOP */}
-
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
 
                   <div className="min-w-0 flex-1">
@@ -915,8 +873,6 @@ export default async function RepliesPage({
                     </div>
 
 
-                    {/* MESSAGE */}
-
                     <div className="mt-5">
 
                       <div className="font-medium">
@@ -932,8 +888,6 @@ export default async function RepliesPage({
 
                     </div>
 
-
-                    {/* META */}
 
                     <div className="mt-5 flex flex-wrap gap-4 text-xs text-zinc-500">
 
@@ -1069,6 +1023,35 @@ export default async function RepliesPage({
                       />
 
 
+                      {/* FOLLOW-UP SCHEDULING */}
+
+                      <select
+                        name="followUpDelay"
+                        defaultValue="24h"
+                        className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm outline-none"
+                      >
+                        <option value="1h">
+                          Follow up in 1 hour
+                        </option>
+
+                        <option value="2h">
+                          Follow up in 2 hours
+                        </option>
+
+                        <option value="24h">
+                          Follow up tomorrow
+                        </option>
+
+                        <option value="3d">
+                          Follow up in 3 days
+                        </option>
+
+                        <option value="7d">
+                          Follow up in 1 week
+                        </option>
+                      </select>
+
+
                       <div className="flex flex-wrap gap-2">
 
                         <button
@@ -1159,8 +1142,7 @@ export default async function RepliesPage({
           (
             replies?.length ??
             0
-          ) ===
-            0 && (
+          ) === 0 && (
 
           <div className="rounded-2xl border border-dashed border-zinc-800 p-16 text-center">
 

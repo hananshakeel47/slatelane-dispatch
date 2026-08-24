@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+
 export default function AdminLayout({
   children,
 }: {
@@ -8,13 +9,24 @@ export default function AdminLayout({
   return (
     <div className="flex min-h-screen bg-zinc-950 text-white">
 
-      <aside className="w-72 border-r border-zinc-800 bg-zinc-900 p-6">
+      {/* SIDEBAR */}
 
-        <h1 className="mb-10 text-2xl font-bold">
-          SlateLane CRM
-        </h1>
+      <aside className="w-72 shrink-0 border-r border-zinc-800 bg-zinc-900 p-6">
 
-        <nav className="space-y-3">
+        <div className="mb-10">
+
+          <h1 className="text-2xl font-bold">
+            SlateLane CRM
+          </h1>
+
+          <p className="mt-1 text-xs text-zinc-500">
+            Dispatch Sales Operations
+          </p>
+
+        </div>
+
+
+        <nav className="space-y-2">
 
           <Link
             href="/admin/dashboard"
@@ -23,6 +35,7 @@ export default function AdminLayout({
             Dashboard
           </Link>
 
+
           <Link
             href="/admin/carriers"
             className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
@@ -30,12 +43,14 @@ export default function AdminLayout({
             Carriers
           </Link>
 
+
           <Link
             href="/admin/leads"
             className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
           >
             Leads
           </Link>
+
 
           <Link
             href="/admin/replies"
@@ -50,12 +65,30 @@ export default function AdminLayout({
             </span>
           </Link>
 
+
+          {/* NEW TASKS PAGE */}
+
+          <Link
+            href="/admin/tasks"
+            className="flex items-center justify-between rounded-lg px-4 py-3 hover:bg-zinc-800"
+          >
+            <span>
+              Tasks
+            </span>
+
+            <span className="rounded-full bg-blue-950 px-2 py-0.5 text-xs text-blue-300">
+              Follow-up
+            </span>
+          </Link>
+
+
           <Link
             href="/admin/import"
             className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
           >
             FMCSA Import
           </Link>
+
 
           <Link
             href="/admin/settings"
@@ -68,8 +101,13 @@ export default function AdminLayout({
 
       </aside>
 
+
+      {/* PAGE */}
+
       <main className="min-w-0 flex-1 p-10">
+
         {children}
+
       </main>
 
     </div>

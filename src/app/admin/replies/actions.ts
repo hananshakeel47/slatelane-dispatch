@@ -40,6 +40,46 @@ function leadStatusForAction(
 }
 
 
+function dueDateFromDelay(
+  delay: string
+) {
+  const now =
+    Date.now();
+
+  switch (delay) {
+    case "1h":
+      return new Date(
+        now + 60 * 60 * 1000
+      ).toISOString();
+
+    case "2h":
+      return new Date(
+        now + 2 * 60 * 60 * 1000
+      ).toISOString();
+
+    case "24h":
+      return new Date(
+        now + 24 * 60 * 60 * 1000
+      ).toISOString();
+
+    case "3d":
+      return new Date(
+        now + 3 * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+    case "7d":
+      return new Date(
+        now + 7 * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+    default:
+      return new Date(
+        now + 24 * 60 * 60 * 1000
+      ).toISOString();
+  }
+}
+
+
 async function stopLeadSequences(
   leadId: string
 ) {
@@ -82,6 +122,192 @@ async function stopLeadSequences(
 }
 
 
+async function createFollowUpTask({
+  replyId,
+  leadId,
+  action,
+  followUpDelay,
+  note,
+  leadName,
+}: {
+  replyId: string;
+  leadId: string;
+  action: string;
+  followUpDelay: string;
+  note: string;
+  leadName: string;
+}) {
+  const supabase =
+    createAdminSupabase();
+
+
+  let taskType:
+    | "call"
+    | "follow_up"
+    | null = null;
+
+  let title:
+    string | null = null;
+
+  let priority:
+    "normal"
+    | "high" = "normal";
+
+
+  if (
+    action ===
+    "call_lead"
+  ) {
+    taskType =
+      "call";
+
+    title =
+      `Call ${leadName}`;
+
+    priority =
+      "high";
+  }
+
+
+  if (
+    action ===
+    "sent_rates"
+  ) {
+    taskType =
+      "follow_up";
+
+    title =
+      `Follow up after sending rates — ${leadName}`;
+
+    priority =
+      "high";
+  }
+
+
+  if (
+    action ===
+    "interested"
+  ) {
+    taskType =
+      "follow_up";
+
+    title =
+      `Follow up with interested lead — ${leadName}`;
+
+    priority =
+      "normal";
+  }
+
+
+  /*
+   * Actions such as Mark Handled,
+   * Not Interested, Wrong Contact,
+   * Unsubscribe do not create tasks.
+   */
+  if (
+    !taskType ||
+    !title
+  ) {
+    return null;
+  }
+
+
+  /*
+   * Double-click / duplicate protection.
+   */
+  const {
+    data: existing,
+    error:
+      existingError,
+  } = await supabase
+    .from(
+      "lead_tasks"
+    )
+    .select("id")
+    .eq(
+      "source_reply_id",
+      replyId
+    )
+    .eq(
+      "task_type",
+      taskType
+    )
+    .eq(
+      "status",
+      "open"
+    )
+    .limit(1)
+    .maybeSingle();
+
+
+  if (existingError) {
+    throw new Error(
+      `Could not check existing task: ${existingError.message}`
+    );
+  }
+
+
+  if (existing) {
+    return existing;
+  }
+
+
+  const {
+    data: task,
+    error,
+  } = await supabase
+    .from(
+      "lead_tasks"
+    )
+    .insert({
+      lead_id:
+        leadId,
+
+      source_reply_id:
+        replyId,
+
+      task_type:
+        taskType,
+
+      title,
+
+      note:
+        note || null,
+
+      status:
+        "open",
+
+      priority,
+
+      due_at:
+        dueDateFromDelay(
+          followUpDelay
+        ),
+
+      updated_at:
+        new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+
+  if (
+    error ||
+    !task
+  ) {
+    throw new Error(
+      `Could not create follow-up task: ${
+        error?.message ||
+        "Unknown error"
+      }`
+    );
+  }
+
+
+  return task;
+}
+
+
 export async function handleReplyAction(
   formData: FormData
 ) {
@@ -92,6 +318,7 @@ export async function handleReplyAction(
       ) ?? ""
     ).trim();
 
+
   const leadId =
     String(
       formData.get(
@@ -99,12 +326,22 @@ export async function handleReplyAction(
       ) ?? ""
     ).trim();
 
+
   const action =
     String(
       formData.get(
         "action"
       ) ?? ""
     ).trim();
+
+
+  const followUpDelay =
+    String(
+      formData.get(
+        "followUpDelay"
+      ) ?? "24h"
+    ).trim();
+
 
   const note =
     String(
@@ -151,7 +388,7 @@ export async function handleReplyAction(
   const {
     data: reply,
     error:
-      replyLookupError,
+      replyError,
   } = await supabase
     .from(
       "email_replies"
@@ -173,11 +410,11 @@ export async function handleReplyAction(
 
 
   if (
-    replyLookupError ||
+    replyError ||
     !reply
   ) {
     throw new Error(
-      replyLookupError?.message ||
+      replyError?.message ||
       "Reply not found."
     );
   }
@@ -195,6 +432,8 @@ export async function handleReplyAction(
     .from("leads")
     .select(`
       id,
+      name,
+      company_name,
       email
     `)
     .eq(
@@ -215,6 +454,27 @@ export async function handleReplyAction(
   }
 
 
+  const leadName =
+    lead.company_name ||
+    lead.name ||
+    lead.email ||
+    "Lead";
+
+
+  /*
+   * Create the task BEFORE marking the reply handled.
+   * If task creation fails, the reply stays open.
+   */
+  await createFollowUpTask({
+    replyId,
+    leadId,
+    action,
+    followUpDelay,
+    note,
+    leadName,
+  });
+
+
   const now =
     new Date().toISOString();
 
@@ -231,9 +491,11 @@ export async function handleReplyAction(
       "email_replies"
     )
     .update({
-      handled: true,
+      handled:
+        true,
 
-      handled_at: now,
+      handled_at:
+        now,
 
       handled_action:
         action,
@@ -241,10 +503,6 @@ export async function handleReplyAction(
       handled_note:
         note || null,
 
-      /*
-       * It leaves the active attention queue
-       * after a human has handled it.
-       */
       requires_attention:
         false,
     })
@@ -264,7 +522,7 @@ export async function handleReplyAction(
 
 
   // ==========================================================
-  // LEAD STATUS
+  // UPDATE LEAD
   // ==========================================================
 
   const leadUpdate:
@@ -272,7 +530,8 @@ export async function handleReplyAction(
       string,
       unknown
     > = {
-    updated_at: now,
+    updated_at:
+      now,
   };
 
 
@@ -289,7 +548,7 @@ export async function handleReplyAction(
 
 
   // ==========================================================
-  // UNSUBSCRIBE ACTION
+  // UNSUBSCRIBE
   // ==========================================================
 
   if (
@@ -346,17 +605,13 @@ export async function handleReplyAction(
   }
 
 
-  /*
-   * A replied lead should never resume
-   * automated follow-ups.
-   */
   await stopLeadSequences(
     leadId
   );
 
 
   // ==========================================================
-  // CHECK WHETHER THIS LEAD HAS OTHER OPEN REPLIES
+  // REMAINING OPEN REPLIES
   // ==========================================================
 
   const {
@@ -396,7 +651,7 @@ export async function handleReplyAction(
     attentionError
   ) {
     console.error(
-      "Could not count remaining replies:",
+      "Could not count open replies:",
       attentionError.message
     );
   }
@@ -408,10 +663,6 @@ export async function handleReplyAction(
       0
     ) > 0;
 
-
-  // ==========================================================
-  // UPDATE LEAD
-  // ==========================================================
 
   const {
     error:
@@ -436,12 +687,16 @@ export async function handleReplyAction(
   }
 
 
-  // ==========================================================
-  // REFRESH CRM
-  // ==========================================================
-
   revalidatePath(
     "/admin/replies"
+  );
+
+  revalidatePath(
+    "/admin/tasks"
+  );
+
+  revalidatePath(
+    "/admin/dashboard"
   );
 
   revalidatePath(
