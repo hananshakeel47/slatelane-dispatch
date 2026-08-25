@@ -10,9 +10,11 @@ import {
 } from "./actions";
 
 
+export const dynamic = "force-dynamic";
+
+
 function formatDate(
-  value:
-    string | null
+  value: string | null
 ) {
   if (!value) {
     return "—";
@@ -75,8 +77,7 @@ export default async function TasksPage() {
 
   const {
     data: openTasks,
-    error:
-      openError,
+    error: openError,
   } = await supabase
     .from(
       "lead_tasks"
@@ -100,8 +101,7 @@ export default async function TasksPage() {
     .order(
       "due_at",
       {
-        ascending:
-          true,
+        ascending: true,
       }
     )
     .limit(200);
@@ -129,8 +129,7 @@ export default async function TasksPage() {
     .order(
       "completed_at",
       {
-        ascending:
-          false,
+        ascending: false,
       }
     )
     .limit(25);
@@ -177,8 +176,7 @@ export default async function TasksPage() {
 
 
   if (
-    leadIds.length >
-    0
+    leadIds.length > 0
   ) {
     const {
       data: leads,
@@ -245,10 +243,12 @@ export default async function TasksPage() {
       (
         task
       ) => {
+
         const due =
           new Date(
             task.due_at
           ).getTime();
+
 
         return (
           due >= now &&
@@ -441,6 +441,7 @@ export default async function TasksPage() {
       <div className="grid gap-4 md:grid-cols-4">
 
         <div className="rounded-2xl border border-red-900/70 bg-red-950/20 p-5">
+
           <div className="text-xs uppercase text-red-400">
             Overdue
           </div>
@@ -448,10 +449,12 @@ export default async function TasksPage() {
           <div className="mt-2 text-3xl font-bold text-red-300">
             {overdue.length}
           </div>
+
         </div>
 
 
         <div className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-5">
+
           <div className="text-xs uppercase text-amber-400">
             Next 24 Hours
           </div>
@@ -459,10 +462,12 @@ export default async function TasksPage() {
           <div className="mt-2 text-3xl font-bold text-amber-300">
             {next24.length}
           </div>
+
         </div>
 
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+
           <div className="text-xs uppercase text-zinc-500">
             Upcoming
           </div>
@@ -470,10 +475,12 @@ export default async function TasksPage() {
           <div className="mt-2 text-3xl font-bold">
             {upcoming.length}
           </div>
+
         </div>
 
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+
           <div className="text-xs uppercase text-zinc-500">
             Completed
           </div>
@@ -485,6 +492,7 @@ export default async function TasksPage() {
               0
             }
           </div>
+
         </div>
 
       </div>
@@ -498,6 +506,7 @@ export default async function TasksPage() {
 
 
       {overdue.length > 0 && (
+
         <section className="space-y-4">
 
           <h2 className="text-xl font-semibold text-red-300">
@@ -520,6 +529,7 @@ export default async function TasksPage() {
           )}
 
         </section>
+
       )}
 
 
@@ -528,6 +538,7 @@ export default async function TasksPage() {
         <h2 className="text-xl font-semibold">
           Next 24 Hours
         </h2>
+
 
         {next24.map(
           (
@@ -545,17 +556,19 @@ export default async function TasksPage() {
         )}
 
 
-        {next24.length ===
-          0 && (
+        {next24.length === 0 && (
+
           <div className="rounded-2xl border border-dashed border-zinc-800 p-10 text-center text-zinc-500">
             No tasks due in the next 24 hours.
           </div>
+
         )}
 
       </section>
 
 
       {upcoming.length > 0 && (
+
         <section className="space-y-4">
 
           <h2 className="text-xl font-semibold">
@@ -578,6 +591,7 @@ export default async function TasksPage() {
           )}
 
         </section>
+
       )}
 
 
@@ -586,11 +600,13 @@ export default async function TasksPage() {
           ?.length ??
         0
       ) > 0 && (
+
         <section className="space-y-4">
 
           <h2 className="text-xl font-semibold text-zinc-400">
             Recently Completed
           </h2>
+
 
           {completedTasks?.map(
             (
@@ -604,6 +620,7 @@ export default async function TasksPage() {
 
 
               return (
+
                 <div
                   key={
                     task.id
@@ -639,11 +656,13 @@ export default async function TasksPage() {
                   </div>
 
                 </div>
+
               );
             }
           )}
 
         </section>
+
       )}
 
     </div>

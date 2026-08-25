@@ -5,6 +5,9 @@ import {
 } from "@/lib/supabase/server";
 
 
+export const dynamic = "force-dynamic";
+
+
 function formatDate(
   value: string | null
 ) {
@@ -144,10 +147,6 @@ export default async function DashboardPage() {
       24 * 60 * 60 * 1000
     ).toISOString();
 
-
-  // ==========================================================
-  // MAIN KPI COUNTS
-  // ==========================================================
 
   const [
     totalLeadsResult,
@@ -319,10 +318,6 @@ export default async function DashboardPage() {
     ]);
 
 
-  // ==========================================================
-  // RECENT REPLIES
-  // ==========================================================
-
   const {
     data: recentReplies,
   } = await supabase
@@ -348,10 +343,6 @@ export default async function DashboardPage() {
     )
     .limit(6);
 
-
-  // ==========================================================
-  // OPEN TASKS
-  // ==========================================================
 
   const {
     data: priorityTasks,
@@ -380,10 +371,6 @@ export default async function DashboardPage() {
     )
     .limit(8);
 
-
-  // ==========================================================
-  // LOAD LEAD DETAILS FOR REPLIES + TASKS
-  // ==========================================================
 
   const leadIds =
     [
@@ -527,10 +514,6 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-8">
 
-      {/* =======================================================
-          HEADER
-      ======================================================= */}
-
       <div className="flex flex-wrap items-end justify-between gap-5">
 
         <div>
@@ -571,10 +554,6 @@ export default async function DashboardPage() {
 
       </div>
 
-
-      {/* =======================================================
-          PRIMARY KPI CARDS
-      ======================================================= */}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 
@@ -660,10 +639,6 @@ export default async function DashboardPage() {
       </div>
 
 
-      {/* =======================================================
-          AUTOMATION KPI CARDS
-      ======================================================= */}
-
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
@@ -719,10 +694,6 @@ export default async function DashboardPage() {
 
       </div>
 
-
-      {/* =======================================================
-          SALES PIPELINE
-      ======================================================= */}
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45 p-6">
 
@@ -809,13 +780,7 @@ export default async function DashboardPage() {
       </section>
 
 
-      {/* =======================================================
-          TWO COLUMN OPERATIONS
-      ======================================================= */}
-
       <div className="grid gap-6 2xl:grid-cols-2">
-
-        {/* PRIORITY TASKS */}
 
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45">
 
@@ -943,8 +908,6 @@ export default async function DashboardPage() {
 
         </section>
 
-
-        {/* RECENT REPLIES */}
 
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45">
 
@@ -1094,10 +1057,6 @@ export default async function DashboardPage() {
 
       </div>
 
-
-      {/* =======================================================
-          PRODUCTION STATUS
-      ======================================================= */}
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/35 p-6">
 
