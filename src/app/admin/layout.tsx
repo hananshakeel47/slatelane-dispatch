@@ -1,114 +1,233 @@
+import type {
+  ReactNode,
+} from "react";
+
 import Link from "next/link";
+
+
+export const dynamic =
+  "force-dynamic";
+
+
+type Props = {
+  children:
+    ReactNode;
+};
+
+
+const navigation = [
+  {
+    href:
+      "/admin/dashboard",
+
+    label:
+      "Dashboard",
+
+    badge:
+      null,
+  },
+
+  {
+    href:
+      "/admin/carriers",
+
+    label:
+      "Carriers",
+
+    badge:
+      null,
+  },
+
+  {
+    href:
+      "/admin/leads",
+
+    label:
+      "Leads",
+
+    badge:
+      null,
+  },
+
+  {
+    href:
+      "/admin/replies",
+
+    label:
+      "Replies",
+
+    badge:
+      "Inbox",
+  },
+
+  {
+    href:
+      "/admin/tasks",
+
+    label:
+      "Tasks",
+
+    badge:
+      "Follow-up",
+  },
+
+  {
+    href:
+      "/admin/pilot",
+
+    label:
+      "Pilot Launch",
+
+    badge:
+      "Launch",
+  },
+
+  {
+    href:
+      "/admin/import",
+
+    label:
+      "FMCSA Import",
+
+    badge:
+      null,
+  },
+
+  {
+    href:
+      "/admin/settings",
+
+    label:
+      "Settings",
+
+    badge:
+      null,
+  },
+];
 
 
 export default function AdminLayout({
   children,
-}: {
-  children: React.ReactNode;
-}) {
+}: Props) {
   return (
-    <div className="flex min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen bg-[#08090b] text-white">
 
-      {/* SIDEBAR */}
+      <div className="min-h-screen lg:grid lg:grid-cols-[248px_minmax(0,1fr)]">
 
-      <aside className="w-72 shrink-0 border-r border-zinc-800 bg-zinc-900 p-6">
+        {/* SIDEBAR */}
 
-        <div className="mb-10">
+        <aside className="border-b border-zinc-800 bg-[#17181b] lg:min-h-screen lg:border-b-0 lg:border-r">
 
-          <h1 className="text-2xl font-bold">
-            SlateLane CRM
-          </h1>
+          <div className="lg:sticky lg:top-0">
 
-          <p className="mt-1 text-xs text-zinc-500">
-            Dispatch Sales Operations
-          </p>
+            {/* BRAND */}
 
-        </div>
+            <div className="px-5 pb-5 pt-6">
 
+              <Link
+                href="/admin/dashboard"
+                className="block"
+              >
 
-        <nav className="space-y-2">
+                <div className="text-xl font-bold tracking-tight">
+                  SlateLane CRM
+                </div>
 
-          <Link
-            href="/admin/dashboard"
-            className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
-          >
-            Dashboard
-          </Link>
+                <div className="mt-1 text-[11px] text-zinc-500">
+                  Dispatch Sales Operations
+                </div>
 
+              </Link>
 
-          <Link
-            href="/admin/carriers"
-            className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
-          >
-            Carriers
-          </Link>
+            </div>
 
 
-          <Link
-            href="/admin/leads"
-            className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
-          >
-            Leads
-          </Link>
+            {/* NAV */}
+
+            <nav className="flex gap-2 overflow-x-auto px-3 pb-4 lg:block lg:space-y-1 lg:overflow-visible lg:px-4">
+
+              {navigation.map(
+                (
+                  item
+                ) => (
+
+                  <Link
+                    key={
+                      item.href
+                    }
+                    href={
+                      item.href
+                    }
+                    className="flex shrink-0 items-center justify-between gap-4 rounded-xl px-4 py-3 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 hover:text-white lg:w-full"
+                  >
+
+                    <span>
+                      {item.label}
+                    </span>
 
 
-          <Link
-            href="/admin/replies"
-            className="flex items-center justify-between rounded-lg px-4 py-3 hover:bg-zinc-800"
-          >
-            <span>
-              Replies
-            </span>
+                    {item.badge && (
 
-            <span className="rounded-full bg-emerald-950 px-2 py-0.5 text-xs text-emerald-300">
-              Inbox
-            </span>
-          </Link>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                          item.badge ===
+                          "Launch"
+                            ? "bg-amber-950 text-amber-300"
+                            : item.badge ===
+                                "Inbox"
+                              ? "bg-emerald-950 text-emerald-300"
+                              : "bg-blue-950 text-blue-300"
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
 
+                    )}
 
-          {/* NEW TASKS PAGE */}
+                  </Link>
 
-          <Link
-            href="/admin/tasks"
-            className="flex items-center justify-between rounded-lg px-4 py-3 hover:bg-zinc-800"
-          >
-            <span>
-              Tasks
-            </span>
+                )
+              )}
 
-            <span className="rounded-full bg-blue-950 px-2 py-0.5 text-xs text-blue-300">
-              Follow-up
-            </span>
-          </Link>
+            </nav>
 
 
-          <Link
-            href="/admin/import"
-            className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
-          >
-            FMCSA Import
-          </Link>
+            {/* SAFETY NOTE */}
+
+            <div className="hidden px-5 py-6 lg:block">
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                  Production
+                </div>
+
+                <div className="mt-2 text-xs leading-5 text-zinc-400">
+                  Outreach is governed by Launch Controls and Pilot protection.
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </aside>
 
 
-          <Link
-            href="/admin/settings"
-            className="block rounded-lg px-4 py-3 hover:bg-zinc-800"
-          >
-            Settings
-          </Link>
+        {/* CONTENT */}
 
-        </nav>
+        <main className="min-w-0">
 
-      </aside>
+          <div className="mx-auto w-full max-w-[1700px] p-5 sm:p-7 lg:p-8 xl:p-10">
 
+            {children}
 
-      {/* PAGE */}
+          </div>
 
-      <main className="min-w-0 flex-1 p-10">
+        </main>
 
-        {children}
-
-      </main>
+      </div>
 
     </div>
   );
