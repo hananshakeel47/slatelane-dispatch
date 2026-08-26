@@ -24,7 +24,6 @@ function formatDate(
     return "—";
   }
 
-
   return new Date(
     value
   ).toLocaleString();
@@ -38,20 +37,17 @@ function scoreClasses(
   const value =
     score ?? 0;
 
-
   if (
     value >= 90
   ) {
     return "border-emerald-700 bg-emerald-950 text-emerald-300";
   }
 
-
   if (
     value >= 80
   ) {
     return "border-blue-800 bg-blue-950 text-blue-300";
   }
-
 
   return "border-zinc-700 bg-zinc-900 text-zinc-300";
 }
@@ -77,6 +73,37 @@ function batchClasses(
 
     default:
       return "border-zinc-700 bg-zinc-900 text-zinc-300";
+  }
+}
+
+
+function emailHealthClasses(
+  status:
+    string | null
+) {
+  const normalized =
+    String(
+      status ??
+        "unknown"
+    )
+      .trim()
+      .toLowerCase();
+
+  switch (
+    normalized
+  ) {
+    case "bounced":
+    case "complained":
+    case "suppressed":
+    case "opted_out":
+      return "border-red-800 bg-red-950 text-red-300";
+
+    case "healthy":
+    case "valid":
+      return "border-emerald-800 bg-emerald-950 text-emerald-300";
+
+    default:
+      return "border-zinc-700 bg-zinc-900 text-zinc-400";
   }
 }
 
@@ -228,6 +255,8 @@ export default async function PilotPage() {
         status_code: string | null;
         lead_score: number | null;
         dispatcher_probability: number | null;
+        email_health_status: string | null;
+        email_health_reason: string | null;
       }
     >();
 
@@ -238,9 +267,7 @@ export default async function PilotPage() {
   ) {
     const carrierIds =
       activeMembers.map(
-        (
-          member
-        ) =>
+        (member) =>
           member.carrier_id
       );
 
@@ -259,7 +286,9 @@ export default async function PilotPage() {
         state,
         status_code,
         lead_score,
-        dispatcher_probability
+        dispatcher_probability,
+        email_health_status,
+        email_health_reason
       `)
       .in(
         "id",
@@ -297,10 +326,16 @@ export default async function PilotPage() {
     !settings.sending_enabled;
 
 
+  const exclusion =
+    preview.exclusions;
+
+
   return (
     <div className="space-y-8">
 
-      {/* HEADER */}
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
 
       <div className="flex flex-wrap items-end justify-between gap-5">
 
@@ -315,23 +350,37 @@ export default async function PilotPage() {
           </h1>
 
           <p className="mt-2 max-w-3xl text-zinc-400">
-            Select, inspect and prepare the first controlled group of real FMCSA carriers before production outreach begins.
+            Select, inspect and prepare a controlled group of real FMCSA carriers using production email-health protection.
           </p>
 
         </div>
 
 
-        <Link
-          href="/admin/settings"
-          className="rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-3 text-sm font-semibold hover:bg-zinc-800"
-        >
-          Launch Controls →
-        </Link>
+        <div className="flex gap-3">
+
+          <Link
+            href="/admin/monitoring/safety"
+            className="rounded-xl border border-red-900 bg-red-950/30 px-5 py-3 text-sm font-semibold text-red-200 hover:bg-red-950/50"
+          >
+            Safety Center
+          </Link>
+
+
+          <Link
+            href="/admin/settings"
+            className="rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-3 text-sm font-semibold hover:bg-zinc-800"
+          >
+            Launch Controls →
+          </Link>
+
+        </div>
 
       </div>
 
 
-      {/* SAFETY STATUS */}
+      {/* =====================================================
+          MASTER SAFETY STATUS
+      ===================================================== */}
 
       <section
         className={`rounded-2xl border p-6 ${
@@ -426,7 +475,137 @@ export default async function PilotPage() {
       </section>
 
 
-      {/* SEQUENCE */}
+      {/* =====================================================
+          PHASE 018 SAFETY PROTECTION
+      ===================================================== */}
+
+      <section className="rounded-2xl border border-red-950 bg-red-950/10 p-6">
+
+        <div className="flex flex-wrap items-start justify-between gap-4">
+
+          <div>
+
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-red-400">
+              Phase 018 Email Protection
+            </div>
+
+            <h2 className="mt-2 text-xl font-bold">
+              Unsafe Carrier Exclusions
+            </h2>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              These addresses are automatically blocked before a pilot can be prepared or armed.
+            </p>
+
+          </div>
+
+
+          <div className="rounded-full border border-emerald-800 bg-emerald-950 px-3 py-1 text-xs font-bold text-emerald-300">
+            PROTECTION ACTIVE
+          </div>
+
+        </div>
+
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+
+            <div className="text-xs uppercase text-zinc-500">
+              Health Blocked
+            </div>
+
+            <div className="mt-2 text-2xl font-bold text-red-300">
+              {exclusion.unsafeHealthTotal}
+            </div>
+
+          </div>
+
+
+          <div className="rounded-xl border border-red-900/60 bg-red-950/20 p-4">
+
+            <div className="text-xs uppercase text-zinc-500">
+              Bounced
+            </div>
+
+            <div className="mt-2 text-2xl font-bold text-red-300">
+              {exclusion.bounced}
+            </div>
+
+          </div>
+
+
+          <div className="rounded-xl border border-red-900/60 bg-red-950/20 p-4">
+
+            <div className="text-xs uppercase text-zinc-500">
+              Complaints
+            </div>
+
+            <div className="mt-2 text-2xl font-bold text-red-300">
+              {exclusion.complained}
+            </div>
+
+          </div>
+
+
+          <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4">
+
+            <div className="text-xs uppercase text-zinc-500">
+              Opted Out
+            </div>
+
+            <div className="mt-2 text-2xl font-bold text-amber-300">
+              {exclusion.optedOut}
+            </div>
+
+          </div>
+
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+
+            <div className="text-xs uppercase text-zinc-500">
+              Suppressed
+            </div>
+
+            <div className="mt-2 text-2xl font-bold">
+              {exclusion.suppressedHealth}
+            </div>
+
+          </div>
+
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
+
+            <div className="text-xs uppercase text-zinc-500">
+              Suppression List
+            </div>
+
+            <div className="mt-2 text-2xl font-bold">
+              {exclusion.suppressionList}
+            </div>
+
+          </div>
+
+        </div>
+
+
+        <div className="mt-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4 text-sm text-zinc-400">
+
+          <span className="font-semibold text-emerald-300">
+            Automatic protection:
+          </span>
+
+          {" "}
+          bounced, complained, opted-out and suppressed addresses cannot enter a new pilot.
+
+        </div>
+
+      </section>
+
+
+      {/* =====================================================
+          SEQUENCE
+      ===================================================== */}
 
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45 p-6">
 
@@ -459,7 +638,9 @@ export default async function PilotPage() {
       </section>
 
 
-      {/* ACTIVE PILOT */}
+      {/* =====================================================
+          ACTIVE PILOT
+      ===================================================== */}
 
       {activeBatch ? (
 
@@ -522,7 +703,7 @@ export default async function PilotPage() {
               "prepared" && (
 
               <div className="mt-6 rounded-xl border border-blue-900 bg-blue-950/20 p-4 text-sm text-blue-200">
-                These carriers have paused sequence enrollments. No campaign email can be sent from this pilot yet.
+                These carriers have paused sequence enrollments. No campaign email can be sent from this pilot yet. Their email health will be checked again when you arm the batch.
               </div>
 
             )}
@@ -532,7 +713,7 @@ export default async function PilotPage() {
               "armed" && (
 
               <div className="mt-6 rounded-xl border border-amber-800 bg-amber-950/25 p-4 text-sm text-amber-200">
-                Pilot enrollments are armed and waiting, but Master Sending is still OFF. Do not turn it ON until you have inspected the complete list below.
+                Pilot enrollments are armed and waiting, but Master Sending is still OFF. Phase 018 safety checks were completed immediately before arming.
               </div>
 
             )}
@@ -540,7 +721,9 @@ export default async function PilotPage() {
           </section>
 
 
-          {/* EXACT PILOT MEMBERS */}
+          {/* =================================================
+              EXACT PILOT MEMBERS
+          ================================================= */}
 
           <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/45">
 
@@ -559,7 +742,7 @@ export default async function PilotPage() {
 
             <div className="overflow-x-auto">
 
-              <table className="w-full min-w-[1000px] text-left text-sm">
+              <table className="w-full min-w-[1150px] text-left text-sm">
 
                 <thead className="border-b border-zinc-800 bg-zinc-950/60 text-xs uppercase text-zinc-500">
 
@@ -594,7 +777,11 @@ export default async function PilotPage() {
                     </th>
 
                     <th className="px-5 py-4">
-                      Status
+                      Email Health
+                    </th>
+
+                    <th className="px-5 py-4">
+                      FMCSA
                     </th>
 
                   </tr>
@@ -616,6 +803,11 @@ export default async function PilotPage() {
                             member.carrier_id
                           )
                         );
+
+
+                      const health =
+                        carrier?.email_health_status ||
+                        "unknown";
 
 
                       return (
@@ -697,8 +889,21 @@ export default async function PilotPage() {
 
                           <td className="px-5 py-4">
 
+                            <span
+                              className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${emailHealthClasses(
+                                health
+                              )}`}
+                            >
+                              {health}
+                            </span>
+
+                          </td>
+
+
+                          <td className="px-5 py-4">
+
                             <span className="rounded-full border border-emerald-800 bg-emerald-950 px-2.5 py-1 text-xs text-emerald-300">
-                              Active FMCSA
+                              Active
                             </span>
 
                           </td>
@@ -718,7 +923,9 @@ export default async function PilotPage() {
           </section>
 
 
-          {/* ARM / CANCEL */}
+          {/* =================================================
+              ARM / CANCEL
+          ================================================= */}
 
           <section className="grid gap-5 xl:grid-cols-2">
 
@@ -737,7 +944,7 @@ export default async function PilotPage() {
                 </h2>
 
                 <p className="mt-2 text-sm text-zinc-400">
-                  Arming changes the paused enrollments to active and schedules Step 1. Master Sending remains OFF, so arming itself sends nothing.
+                  Arming performs another live email-health and suppression check, then changes safe enrollments from paused to active. Master Sending remains OFF.
                 </p>
 
 
@@ -839,7 +1046,9 @@ export default async function PilotPage() {
 
         <>
 
-          {/* PREVIEW */}
+          {/* =================================================
+              PREVIEW
+          ================================================= */}
 
           <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45">
 
@@ -852,7 +1061,7 @@ export default async function PilotPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-zinc-500">
-                  Highest-ranked eligible carriers after safety exclusions.
+                  Highest-ranked eligible carriers after Phase 018 safety exclusions.
                 </p>
 
               </div>
@@ -879,7 +1088,7 @@ export default async function PilotPage() {
 
             <div className="overflow-x-auto">
 
-              <table className="w-full min-w-[1000px] text-left text-sm">
+              <table className="w-full min-w-[1100px] text-left text-sm">
 
                 <thead className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase text-zinc-500">
 
@@ -915,6 +1124,10 @@ export default async function PilotPage() {
 
                     <th className="px-5 py-4">
                       Email
+                    </th>
+
+                    <th className="px-5 py-4">
+                      Email Health
                     </th>
 
                   </tr>
@@ -1013,6 +1226,20 @@ export default async function PilotPage() {
                           {carrier.email}
                         </td>
 
+
+                        <td className="px-5 py-4">
+
+                          <span
+                            className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${emailHealthClasses(
+                              carrier.email_health_status
+                            )}`}
+                          >
+                            {carrier.email_health_status ||
+                              "unknown"}
+                          </span>
+
+                        </td>
+
                       </tr>
 
                     )
@@ -1025,10 +1252,10 @@ export default async function PilotPage() {
                     <tr>
 
                       <td
-                        colSpan={8}
+                        colSpan={9}
                         className="px-5 py-12 text-center text-zinc-500"
                       >
-                        No eligible carriers were found under the current launch rules.
+                        No eligible carriers were found under the current launch and email-safety rules.
                       </td>
 
                     </tr>
@@ -1044,7 +1271,9 @@ export default async function PilotPage() {
           </section>
 
 
-          {/* PREPARE */}
+          {/* =================================================
+              PREPARE
+          ================================================= */}
 
           <section className="rounded-2xl border border-blue-900/60 bg-blue-950/10 p-6">
 
@@ -1053,7 +1282,7 @@ export default async function PilotPage() {
             </h2>
 
             <p className="mt-2 max-w-3xl text-sm text-zinc-400">
-              This creates CRM leads and PAUSED sequence enrollments only. Preparing the pilot does not send an email.
+              Phase 018 checks each selected carrier again immediately before creating the pilot. This creates CRM leads and PAUSED sequence enrollments only. Preparing does not send email.
             </p>
 
 
@@ -1128,7 +1357,9 @@ export default async function PilotPage() {
       )}
 
 
-      {/* HISTORY */}
+      {/* =====================================================
+          HISTORY
+      ===================================================== */}
 
       {latestBatch && (
 

@@ -1,36 +1,47 @@
 import "server-only";
 
-import {
-  revalidatePath,
-} from "next/cache";
+import { revalidatePath } from "next/cache";
 
-import {
-  createAdminSupabase,
-} from "@/lib/supabase/admin";
+import { createAdminSupabase } from "@/lib/supabase/admin";
 
-import {
-  getLaunchSnapshot,
-} from "@/lib/email/launch-controls";
+import { getLaunchSnapshot } from "@/lib/email/launch-controls";
 
 
-function normalizeEmail(
-  value: unknown
-) {
-  return String(
-    value ?? ""
-  )
+/* ============================================================
+   EMAIL SAFETY
+============================================================ */
+
+const UNSAFE_EMAIL_HEALTH_STATUSES = new Set([
+  "bounced",
+  "complained",
+  "opted_out",
+  "suppressed",
+]);
+
+
+function normalizeEmail(value: unknown) {
+  return String(value ?? "")
     .trim()
     .toLowerCase();
 }
 
 
-function isUsableEmail(
-  value: unknown
-) {
-  const email =
-    normalizeEmail(
-      value
-    );
+function normalizeHealthStatus(value: unknown) {
+  return String(value ?? "unknown")
+    .trim()
+    .toLowerCase();
+}
+
+
+function isUnsafeEmailHealth(value: unknown) {
+  return UNSAFE_EMAIL_HEALTH_STATUSES.has(
+    normalizeHealthStatus(value)
+  );
+}
+
+
+function isUsableEmail(value: unknown) {
+  const email = normalizeEmail(value);
 
   return (
     email.length >= 5 &&
@@ -41,12 +52,8 @@ function isUsableEmail(
 }
 
 
-function chunk<T>(
-  values: T[],
-  size = 100
-) {
-  const result: T[][] =
-    [];
+function chunk<T>(values: T[], size = 100) {
+  const result: T[][] = [];
 
   for (
     let index = 0;
@@ -54,10 +61,7 @@ function chunk<T>(
     index += size
   ) {
     result.push(
-      values.slice(
-        index,
-        index + size
-      )
+      values.slice(index, index + size)
     );
   }
 
@@ -65,18 +69,18 @@ function chunk<T>(
 }
 
 
-async function getActiveSequence() {
-  const supabase =
-    createAdminSupabase();
+/* ============================================================
+   ACTIVE SEQUENCE
+============================================================ */
 
+async function getActiveSequence() {
+  const supabase = createAdminSupabase();
 
   const {
     data,
     error,
   } = await supabase
-    .from(
-      "email_sequences"
-    )
+    .from("email_sequences")
     .select(`
       id,
       name,
@@ -84,10 +88,7 @@ async function getActiveSequence() {
       active,
       created_at
     `)
-    .eq(
-      "active",
-      true
-    )
+    .eq("active", true)
     .order(
       "created_at",
       {
@@ -97,75 +98,154 @@ async function getActiveSequence() {
     .limit(1)
     .maybeSingle();
 
-
   if (
     error ||
     !data
   ) {
     throw new Error(
       error?.message ||
-      "No active email sequence was found."
+        "No active email sequence was found."
     );
   }
-
 
   return data;
 }
 
 
+/* ============================================================
+   FINAL EMAIL SAFETY CHECK
+
+   Used immediately before preparing / arming.
+   This protects against a carrier becoming unsafe AFTER the
+   preview page was loaded.
+============================================================ */
+
+async function assertEmailIsStillSafe({
+  carrierId,
+  email,
+}: {
+  carrierId: number;
+  email: string;
+}) {
+  const supabase = createAdminSupabase();
+
+  const normalizedEmail = normalizeEmail(email);
+
+  const {
+    data: carrier,
+    error: carrierError,
+  } = await supabase
+    .from("carriers")
+    .select(`
+      id,
+      email,
+      email_health_status,
+      email_health_reason
+    `)
+    .eq("id", carrierId)
+    .single();
+
+  if (
+    carrierError ||
+    !carrier
+  ) {
+    throw new Error(
+      carrierError?.message ||
+        `Carrier ${carrierId} could not be re-checked.`
+    );
+  }
+
+  const currentEmail = normalizeEmail(
+    carrier.email
+  );
+
+  if (
+    !currentEmail ||
+    currentEmail !== normalizedEmail
+  ) {
+    throw new Error(
+      `Carrier ${carrierId} email changed after pilot selection. Safety blocked the operation.`
+    );
+  }
+
+  if (
+    isUnsafeEmailHealth(
+      carrier.email_health_status
+    )
+  ) {
+    throw new Error(
+      `Carrier ${carrierId} is blocked because email health is ${normalizeHealthStatus(
+        carrier.email_health_status
+      )}${
+        carrier.email_health_reason
+          ? ` (${carrier.email_health_reason})`
+          : ""
+      }.`
+    );
+  }
+
+  const {
+    data: suppression,
+    error: suppressionError,
+  } = await supabase
+    .from("email_suppressions")
+    .select("email")
+    .eq("email", normalizedEmail)
+    .limit(1)
+    .maybeSingle();
+
+  if (suppressionError) {
+    throw new Error(
+      `Could not verify suppression status for ${normalizedEmail}: ${suppressionError.message}`
+    );
+  }
+
+  if (suppression) {
+    throw new Error(
+      `${normalizedEmail} is present in the suppression list.`
+    );
+  }
+}
+
+
+/* ============================================================
+   PILOT PREVIEW
+============================================================ */
+
 export async function getPilotPreview(
   requestedLimit?: number
 ) {
-  const supabase =
-    createAdminSupabase();
-
+  const supabase = createAdminSupabase();
 
   const snapshot =
     await getLaunchSnapshot();
 
-
   const settings =
     snapshot.settings;
-
 
   const sequence =
     await getActiveSequence();
 
-
   const requested =
     Number.isFinite(
-      Number(
-        requestedLimit
-      )
+      Number(requestedLimit)
     )
-      ? Number(
-          requestedLimit
-        )
+      ? Number(requestedLimit)
       : settings.pilot_limit;
-
 
   const limit =
     Math.max(
       1,
       Math.min(
-        Math.floor(
-          requested
-        ),
+        Math.floor(requested),
         settings.pilot_limit,
         100
       )
     );
 
-
   /*
-   * Pull a larger pool because some records
-   * will later be rejected for:
-   *
-   * - existing leads
-   * - suppression
-   * - prior pilots
-   * - duplicate emails
-   * - invalid addresses
+   * Pull a larger pool because carriers can later
+   * be rejected by multiple safety filters.
    */
   const scanLimit =
     Math.max(
@@ -175,7 +255,6 @@ export async function getPilotPreview(
         limit * 30
       )
     );
-
 
   let carrierQuery =
     supabase
@@ -197,7 +276,12 @@ export async function getPilotPreview(
         lead_score,
         dispatcher_probability,
         contacted,
-        client
+        client,
+        email_health_status,
+        email_health_reason,
+        email_health_updated_at,
+        email_last_bounced_at,
+        email_last_complained_at
       `)
       .gte(
         "lead_score",
@@ -216,7 +300,6 @@ export async function getPilotPreview(
         }
       );
 
-
   if (
     settings.require_active_authority
   ) {
@@ -226,7 +309,6 @@ export async function getPilotPreview(
         "A"
       );
   }
-
 
   if (
     settings.require_email
@@ -239,7 +321,6 @@ export async function getPilotPreview(
       );
   }
 
-
   const {
     data: rawCarriers,
     error: carrierError,
@@ -248,7 +329,6 @@ export async function getPilotPreview(
       scanLimit
     );
 
-
   if (carrierError) {
     throw new Error(
       `Could not load pilot carriers: ${carrierError.message}`
@@ -256,21 +336,69 @@ export async function getPilotPreview(
   }
 
 
+  /* ==========================================================
+     PHASE 018 EMAIL HEALTH COUNTERS
+  ========================================================== */
+
+  const healthCounters = {
+    bounced: 0,
+    complained: 0,
+    optedOut: 0,
+    suppressed: 0,
+  };
+
+
+  for (
+    const carrier
+    of rawCarriers ?? []
+  ) {
+    const health =
+      normalizeHealthStatus(
+        carrier.email_health_status
+      );
+
+    if (
+      health === "bounced"
+    ) {
+      healthCounters.bounced += 1;
+    }
+
+    if (
+      health === "complained"
+    ) {
+      healthCounters.complained += 1;
+    }
+
+    if (
+      health === "opted_out"
+    ) {
+      healthCounters.optedOut += 1;
+    }
+
+    if (
+      health === "suppressed"
+    ) {
+      healthCounters.suppressed += 1;
+    }
+  }
+
+
+  /* ==========================================================
+     BASIC CARRIER FILTERS
+  ========================================================== */
+
   const baseCandidates =
     (
       rawCarriers ??
       []
     ).filter(
-      (
-        carrier
-      ) => {
+      (carrier) => {
 
         if (
           !carrier.dot_number
         ) {
           return false;
         }
-
 
         if (
           !isUsableEmail(
@@ -280,26 +408,33 @@ export async function getPilotPreview(
           return false;
         }
 
-
         /*
-         * Already-contacted carriers do not belong
-         * in a brand-new cold pilot.
+         * Phase 018:
+         * carrier-level email health protection.
          */
         if (
-          carrier.contacted ===
-          true
+          isUnsafeEmailHealth(
+            carrier.email_health_status
+          )
         ) {
           return false;
         }
 
+        /*
+         * Already contacted carriers do not belong
+         * in a fresh cold pilot.
+         */
+        if (
+          carrier.contacted === true
+        ) {
+          return false;
+        }
 
         if (
-          carrier.client ===
-          true
+          carrier.client === true
         ) {
           return false;
         }
-
 
         return true;
       }
@@ -308,18 +443,14 @@ export async function getPilotPreview(
 
   const dotNumbers =
     baseCandidates.map(
-      (
-        carrier
-      ) =>
+      (carrier) =>
         carrier.dot_number
     );
 
 
   const carrierIds =
     baseCandidates.map(
-      (
-        carrier
-      ) =>
+      (carrier) =>
         carrier.id
     );
 
@@ -328,9 +459,7 @@ export async function getPilotPreview(
     [
       ...new Set(
         baseCandidates.map(
-          (
-            carrier
-          ) =>
+          (carrier) =>
             normalizeEmail(
               carrier.email
             )
@@ -339,13 +468,12 @@ export async function getPilotPreview(
     ];
 
 
-  /*
-   * Existing leads:
-   * any carrier already in Leads is excluded.
-   */
+  /* ==========================================================
+     EXISTING LEADS
+  ========================================================== */
+
   const existingDotNumbers =
     new Set<number>();
-
 
   const existingLeadEmails =
     new Set<string>();
@@ -364,7 +492,6 @@ export async function getPilotPreview(
       continue;
     }
 
-
     const {
       data,
       error,
@@ -379,13 +506,11 @@ export async function getPilotPreview(
         group
       );
 
-
     if (error) {
       throw new Error(
         `Could not check existing leads: ${error.message}`
       );
     }
-
 
     for (
       const lead
@@ -401,7 +526,6 @@ export async function getPilotPreview(
         );
       }
 
-
       if (
         lead.email
       ) {
@@ -415,9 +539,10 @@ export async function getPilotPreview(
   }
 
 
-  /*
-   * Suppression list.
-   */
+  /* ==========================================================
+     GLOBAL SUPPRESSION LIST
+  ========================================================== */
+
   const suppressedEmails =
     new Set<string>();
 
@@ -435,7 +560,6 @@ export async function getPilotPreview(
       continue;
     }
 
-
     const {
       data,
       error,
@@ -449,13 +573,11 @@ export async function getPilotPreview(
         group
       );
 
-
     if (error) {
       throw new Error(
         `Could not check email suppressions: ${error.message}`
       );
     }
-
 
     for (
       const row
@@ -474,10 +596,10 @@ export async function getPilotPreview(
   }
 
 
-  /*
-   * Never use a carrier that has already belonged
-   * to any previous pilot batch.
-   */
+  /* ==========================================================
+     PREVIOUS PILOTS
+  ========================================================== */
+
   const previousPilotCarrierIds =
     new Set<number>();
 
@@ -495,7 +617,6 @@ export async function getPilotPreview(
       continue;
     }
 
-
     const {
       data,
       error,
@@ -511,13 +632,11 @@ export async function getPilotPreview(
         group
       );
 
-
     if (error) {
       throw new Error(
         `Could not check previous pilots: ${error.message}`
       );
     }
-
 
     for (
       const member
@@ -532,54 +651,63 @@ export async function getPilotPreview(
   }
 
 
+  /* ==========================================================
+     FINAL ELIGIBILITY FILTER
+  ========================================================== */
+
   const usedEmails =
     new Set<string>();
 
 
+  let suppressionListExcluded =
+    0;
+
+  let existingLeadExcluded =
+    0;
+
+  let previousPilotExcluded =
+    0;
+
+  let duplicateEmailExcluded =
+    0;
+
+
   const eligible =
     baseCandidates.filter(
-      (
-        carrier
-      ) => {
+      (carrier) => {
 
         const email =
           normalizeEmail(
             carrier.email
           );
 
-
         const dot =
           Number(
             carrier.dot_number
           );
 
-
         if (
           existingDotNumbers.has(
             dot
-          )
-        ) {
-          return false;
-        }
-
-
-        if (
+          ) ||
           existingLeadEmails.has(
             email
           )
         ) {
+          existingLeadExcluded += 1;
+
           return false;
         }
-
 
         if (
           suppressedEmails.has(
             email
           )
         ) {
+          suppressionListExcluded += 1;
+
           return false;
         }
-
 
         if (
           previousPilotCarrierIds.has(
@@ -588,31 +716,39 @@ export async function getPilotPreview(
             )
           )
         ) {
+          previousPilotExcluded += 1;
+
           return false;
         }
 
-
         /*
-         * Avoid two DOT records using the same
-         * email address inside one pilot.
+         * Do not allow two DOT records using the
+         * same email inside one pilot.
          */
         if (
           usedEmails.has(
             email
           )
         ) {
+          duplicateEmailExcluded += 1;
+
           return false;
         }
-
 
         usedEmails.add(
           email
         );
 
-
         return true;
       }
     );
+
+
+  const unsafeHealthTotal =
+    healthCounters.bounced +
+    healthCounters.complained +
+    healthCounters.optedOut +
+    healthCounters.suppressed;
 
 
   return {
@@ -643,9 +779,41 @@ export async function getPilotPreview(
 
     remainingToday:
       snapshot.remainingToday,
+
+    exclusions: {
+      unsafeHealthTotal,
+
+      bounced:
+        healthCounters.bounced,
+
+      complained:
+        healthCounters.complained,
+
+      optedOut:
+        healthCounters.optedOut,
+
+      suppressedHealth:
+        healthCounters.suppressed,
+
+      suppressionList:
+        suppressionListExcluded,
+
+      existingLead:
+        existingLeadExcluded,
+
+      previousPilot:
+        previousPilotExcluded,
+
+      duplicateEmail:
+        duplicateEmailExcluded,
+    },
   };
 }
 
+
+/* ============================================================
+   PREPARE PILOT
+============================================================ */
 
 export async function preparePilotAction(
   formData: FormData
@@ -706,8 +874,8 @@ export async function preparePilotAction(
             formData.get(
               "pilotCount"
             ) ??
-            snapshot.settings
-              .pilot_limit
+              snapshot.settings
+                .pilot_limit
           )
         ),
         snapshot.settings
@@ -821,7 +989,7 @@ export async function preparePilotAction(
           .minimum_carrier_score,
 
       notes:
-        "Controlled real-carrier pilot prepared while Master Sending was OFF.",
+        "Controlled real-carrier pilot prepared with Phase 018 email-health protection while Master Sending was OFF.",
 
       updated_at:
         now,
@@ -862,6 +1030,22 @@ export async function preparePilotAction(
         normalizeEmail(
           carrier.email
         );
+
+
+      /*
+       * FINAL PHASE 018 CHECK.
+       *
+       * Carrier could have bounced / complained /
+       * opted out after preview generation.
+       */
+      await assertEmailIsStillSafe({
+        carrierId:
+          Number(
+            carrier.id
+          ),
+
+        email,
+      });
 
 
       /*
@@ -968,8 +1152,8 @@ export async function preparePilotAction(
       /*
        * Critical safety feature:
        *
-       * Enrollment begins PAUSED with no next_send_at.
-       * Preparing a pilot therefore cannot send an email.
+       * Preparing does NOT send.
+       * Enrollment begins PAUSED.
        */
       const {
         data:
@@ -1097,11 +1281,7 @@ export async function preparePilotAction(
 
     /*
      * Best-effort rollback.
-     *
-     * Delete batch first so member rows cascade away,
-     * then remove created enrollments and leads.
      */
-
     await supabase
       .from(
         "email_pilot_batches"
@@ -1178,8 +1358,20 @@ export async function preparePilotAction(
   revalidatePath(
     "/admin/settings"
   );
+
+  revalidatePath(
+    "/admin/monitoring"
+  );
+
+  revalidatePath(
+    "/admin/monitoring/safety"
+  );
 }
 
+
+/* ============================================================
+   ARM PILOT
+============================================================ */
 
 export async function armPilotAction(
   formData: FormData
@@ -1229,8 +1421,7 @@ export async function armPilotAction(
 
 
   /*
-   * Even arming must happen while Master Sending
-   * is still OFF.
+   * Arming must happen while Master Sending remains OFF.
    */
   if (
     snapshot.settings
@@ -1303,9 +1494,11 @@ export async function armPilotAction(
     .from(
       "email_pilot_members"
     )
-    .select(
-      "enrollment_id"
-    )
+    .select(`
+      carrier_id,
+      enrollment_id,
+      email
+    `)
     .eq(
       "batch_id",
       batchId
@@ -1321,14 +1514,13 @@ export async function armPilotAction(
   }
 
 
+  const safeMembers =
+    members ?? [];
+
+
   const enrollmentIds =
-    (
-      members ??
-      []
-    ).map(
-      (
-        member
-      ) =>
+    safeMembers.map(
+      (member) =>
         member.enrollment_id
     );
 
@@ -1350,6 +1542,27 @@ export async function armPilotAction(
     throw new Error(
       "Pilot member count does not match the prepared count. Arming was blocked."
     );
+  }
+
+
+  /*
+   * CRITICAL PHASE 018B CHECK:
+   *
+   * Re-check EVERY carrier just before arming.
+   */
+  for (
+    const member
+    of safeMembers
+  ) {
+    await assertEmailIsStillSafe({
+      carrierId:
+        Number(
+          member.carrier_id
+        ),
+
+      email:
+        member.email,
+    });
   }
 
 
@@ -1503,8 +1716,20 @@ export async function armPilotAction(
   revalidatePath(
     "/admin/settings"
   );
+
+  revalidatePath(
+    "/admin/monitoring"
+  );
+
+  revalidatePath(
+    "/admin/monitoring/safety"
+  );
 }
 
+
+/* ============================================================
+   CANCEL PILOT
+============================================================ */
 
 export async function cancelPilotAction(
   formData: FormData
@@ -1625,9 +1850,7 @@ export async function cancelPilotAction(
       members ??
       []
     ).map(
-      (
-        member
-      ) =>
+      (member) =>
         member.enrollment_id
     );
 
@@ -1707,5 +1930,9 @@ export async function cancelPilotAction(
 
   revalidatePath(
     "/admin/settings"
+  );
+
+  revalidatePath(
+    "/admin/monitoring"
   );
 }
