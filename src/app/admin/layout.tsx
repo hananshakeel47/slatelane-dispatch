@@ -14,6 +14,11 @@ const navItems = [
     badge: "Live",
   },
   {
+    href: "/admin/monitoring/safety",
+    label: "Safety Center",
+    badge: "Protected",
+  },
+  {
     href: "/admin/carriers",
     label: "Carriers",
   },
@@ -60,6 +65,9 @@ function getBadgeClasses(badge?: string) {
     case "Live":
       return "border-cyan-800 bg-cyan-950 text-cyan-300";
 
+    case "Protected":
+      return "border-red-900 bg-red-950 text-red-300";
+
     default:
       return "border-zinc-700 bg-zinc-900 text-zinc-300";
   }
@@ -73,11 +81,13 @@ export default function AdminLayout({
   return (
     <div className="min-h-screen bg-[#07090b] text-white">
       <div className="flex min-h-screen">
+
         {/* =====================================================
             SIDEBAR
         ===================================================== */}
 
         <aside className="fixed left-0 top-0 z-40 flex h-screen w-[248px] flex-col border-r border-zinc-800 bg-[#17181c]">
+
           {/* BRAND */}
 
           <div className="px-5 pb-6 pt-6">
@@ -94,65 +104,77 @@ export default function AdminLayout({
 
           {/* NAVIGATION */}
 
-          <nav className="flex-1 space-y-1 px-4">
-            {navItems.map((item) => {
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="
-                    group flex min-h-[46px]
-                    items-center justify-between
-                    rounded-xl px-3 py-2
-                    text-sm font-medium text-zinc-200
-                    transition
-                    hover:bg-zinc-800/80
-                    hover:text-white
-                  "
-                >
-                  <span>{item.label}</span>
+          <nav className="flex-1 space-y-1 overflow-y-auto px-4">
+            {navItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="
+                  group
+                  flex
+                  min-h-[44px]
+                  items-center
+                  justify-between
+                  rounded-xl
+                  px-3
+                  py-2
+                  text-sm
+                  font-medium
+                  text-zinc-200
+                  transition
+                  hover:bg-zinc-800/80
+                  hover:text-white
+                "
+              >
+                <span>{item.label}</span>
 
-                  {item.badge ? (
-                    <span
-                      className={`
-                        rounded-full border
-                        px-2 py-0.5
-                        text-[10px] font-semibold
-                        ${getBadgeClasses(item.badge)}
-                      `}
-                    >
-                      {item.badge}
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
+                {item.badge ? (
+                  <span
+                    className={`
+                      rounded-full
+                      border
+                      px-2
+                      py-0.5
+                      text-[10px]
+                      font-semibold
+                      ${getBadgeClasses(item.badge)}
+                    `}
+                  >
+                    {item.badge}
+                  </span>
+                ) : null}
+              </Link>
+            ))}
           </nav>
 
-          {/* PRODUCTION INFO */}
+          {/* PRODUCTION INFORMATION */}
 
           <div className="p-4">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4">
+
               <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-600">
                 Production
               </div>
 
               <p className="mt-3 text-xs leading-5 text-zinc-500">
-                Outreach is governed by Launch Controls, Pilot protection and
-                automated safety systems.
+                Outreach is governed by Launch Controls,
+                Pilot protection and automatic safety systems.
               </p>
+
             </div>
           </div>
         </aside>
 
         {/* =====================================================
-            MAIN CONTENT
+            MAIN PAGE CONTENT
         ===================================================== */}
 
         <main className="ml-[248px] min-h-screen w-[calc(100%-248px)] flex-1">
+
           <div className="mx-auto w-full max-w-[1700px] px-8 py-8">
             {children}
           </div>
+
         </main>
       </div>
     </div>
