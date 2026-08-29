@@ -1,75 +1,162 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 
-export async function runSafetyCheckAction(
-  _formData: FormData
-) {
-  const supabase = createServerSupabase();
+type RecoveryResult = {
+  success?: boolean;
+  reset?: boolean;
+  reason?: string;
+  message?: string;
+};
 
-  const { error } = await supabase.rpc(
-    "evaluate_email_safety"
-  );
+type RecoveryReadiness = {
+  ready?: boolean;
+  reason?: string;
+  auto_paused?: boolean;
+  pause_reason?: string | null;
+  active_enrollments?: number;
+  unfinished_pilots?: number;
+};
 
-  if (error) {
-    throw new Error(
-      `Safety check failed: ${error.message}`
-    );
+function cleanMessage(value: FormDataEntryValue | null) {
+  if (typeof value !== "string") {
+    return "";
   }
 
-  revalidatePath("/admin/monitoring");
-  revalidatePath("/admin/monitoring/safety");
-  revalidatePath("/admin/settings");
+  return value.trim().slice(0, 500);
 }
 
-export async function resetSafetyLockAction(
-  formData: FormData
-) {
-  const confirmation = String(
-    formData.get("confirmation") ?? ""
-  )
-    .trim()
-    .toUpperCase();
+export async function resetSafetyRecoveryAction(formData: FormData) {
+  const confirmation = cleanMessage(formData.get("confirmation"));
+  const note = cleanMessage(formData.get("note"));
 
-  const note = String(
-    formData.get("note") ?? ""
-  ).trim();
+  /*
+   * ==========================================================
+   * CONFIRMATION
+   * ==========================================================
+   */
 
-  if (confirmation !== "RESET") {
-    throw new Error(
-      "Safety reset cancelled. Type RESET exactly."
-    );
-  }
-
-  const supabase = createServerSupabase();
-
-  const { error } = await supabase.rpc(
-    "reset_email_safety_pause",
-    {
-      p_note:
-        note ||
-        "Manual safety reset from SlateLane Safety Center",
-    }
-  );
-
-  if (error) {
-    throw new Error(
-      `Could not reset safety lock: ${error.message}`
+  if (confirmation !== "RESET SAFETY") {
+    redirect(
+      "/admin/monitoring/safety?recovery_error=confirmation_required"
     );
   }
 
   /*
-   * IMPORTANT:
-   * reset_email_safety_pause() does NOT enable
-   * Master Sending.
-   *
-   * Master Sending must still be turned ON manually
-   * from Launch Controls after the underlying problem
-   * has been investigated.
+   * ==========================================================
+   * SUPABASE
+   * ==========================================================
    */
 
+  const supabase = await createServerSupabase();
+
+  /*
+   * ==========================================================
+   * SERVER-SIDE READINESS CHECK
+   * ==========================================================
+   */
+
+  const {
+    data: readinessRaw,
+    error: readinessError,
+  } = await supabase.rpc("email_safety_recovery_readiness");
+
+  if (readinessError) {
+    console.error(
+      "SAFETY RECOVERY READINESS ERROR:",
+      readinessError
+    );
+
+    redirect(
+      "/admin/monitoring/safety?recovery_error=readiness_check_failed"
+    );
+  }
+
+  const readiness =
+    readinessRaw as RecoveryReadiness | null;
+
+  if (!readiness?.ready) {
+    const reason =
+      readiness?.reason || "not_ready";
+
+    redirect(
+      `/admin/monitoring/safety?recovery_error=${encodeURIComponent(
+        reason
+      )}`
+    );
+  }
+
+  /*
+   * ==========================================================
+   * PROTECTED DATABASE RESET
+   * ==========================================================
+   *
+   * This should NOT:
+   * - Enable Master Sending
+   * - Resume stopped enrollments
+   * - Send an email
+   * - Create a pilot
+   *
+   * It clears only the automatic safety pause.
+   */
+
+  const {
+    data: resultRaw,
+    error: resetError,
+  } = await supabase.rpc(
+    "reset_email_safety_after_recovery",
+    {
+      p_confirmation: confirmation,
+      p_note: note || null,
+    }
+  );
+
+  if (resetError) {
+    console.error(
+      "RESET EMAIL SAFETY ERROR:",
+      resetError
+    );
+
+    redirect(
+      "/admin/monitoring/safety?recovery_error=reset_failed"
+    );
+  }
+
+  const result =
+    resultRaw as RecoveryResult | null;
+
+  if (!result?.success || !result?.reset) {
+    const reason =
+      result?.reason || "reset_blocked";
+
+    redirect(
+      `/admin/monitoring/safety?recovery_error=${encodeURIComponent(
+        reason
+      )}`
+    );
+  }
+
+  /*
+   * ==========================================================
+   * REFRESH PRODUCTION UI
+   * ==========================================================
+   */
+
+  revalidatePath("/admin/dashboard");
   revalidatePath("/admin/monitoring");
   revalidatePath("/admin/monitoring/safety");
   revalidatePath("/admin/settings");
+  revalidatePath("/admin/pilot");
+
+  /*
+   * ==========================================================
+   * SUCCESS
+   * ==========================================================
+   */
+
+  redirect(
+    "/admin/monitoring/safety?recovery_success=1"
+  );
 }
