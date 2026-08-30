@@ -4,39 +4,42 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createServerSupabase } from "@/lib/supabase/server";
 
-type RecoveryResult = {
-  success?: boolean;
-  reset?: boolean;
-  reason?: string;
-  message?: string;
-};
-
 type RecoveryReadiness = {
   ready?: boolean;
   reason?: string;
-  auto_paused?: boolean;
-  pause_reason?: string | null;
+  sends?: number;
+  bounces?: number;
+  failures?: number;
+  complaints?: number;
   active_enrollments?: number;
   unfinished_pilots?: number;
+  auto_paused?: boolean;
+  pause_reason?: string | null;
 };
 
-function cleanMessage(value: FormDataEntryValue | null) {
+type ResetResult = {
+  success?: boolean;
+  reason?: string;
+  message?: string;
+  auto_paused?: boolean;
+  recovered_at?: string;
+};
+
+function safeString(value: FormDataEntryValue | null) {
   if (typeof value !== "string") {
     return "";
   }
 
-  return value.trim().slice(0, 500);
+  return value.trim();
 }
 
 export async function resetSafetyRecoveryAction(formData: FormData) {
-  const confirmation = cleanMessage(formData.get("confirmation"));
-  const note = cleanMessage(formData.get("note"));
+  const confirmation = safeString(formData.get("confirmation"));
+  const note = safeString(formData.get("note"));
 
-  /*
-   * ==========================================================
-   * CONFIRMATION
-   * ==========================================================
-   */
+  // ------------------------------------------------------------
+  // 1. Require exact manual confirmation
+  // ------------------------------------------------------------
 
   if (confirmation !== "RESET SAFETY") {
     redirect(
@@ -44,22 +47,22 @@ export async function resetSafetyRecoveryAction(formData: FormData) {
     );
   }
 
-  /*
-   * ==========================================================
-   * SUPABASE
-   * ==========================================================
-   */
+  // ------------------------------------------------------------
+  // 2. Require a recovery note
+  // ------------------------------------------------------------
+
+  if (note.length < 5) {
+    redirect("/admin/monitoring/safety?recovery_error=note_required");
+  }
 
   const supabase = await createServerSupabase();
 
-  /*
-   * ==========================================================
-   * SERVER-SIDE READINESS CHECK
-   * ==========================================================
-   */
+  // ------------------------------------------------------------
+  // 3. Re-check recovery readiness immediately before reset
+  // ------------------------------------------------------------
 
   const {
-    data: readinessRaw,
+    data: readinessData,
     error: readinessError,
   } = await supabase.rpc("email_safety_recovery_readiness");
 
@@ -75,11 +78,11 @@ export async function resetSafetyRecoveryAction(formData: FormData) {
   }
 
   const readiness =
-    readinessRaw as RecoveryReadiness | null;
+    (readinessData ?? {}) as RecoveryReadiness;
 
-  if (!readiness?.ready) {
+  if (readiness.ready !== true) {
     const reason =
-      readiness?.reason || "not_ready";
+      readiness.reason || "recovery_requirements_not_met";
 
     redirect(
       `/admin/monitoring/safety?recovery_error=${encodeURIComponent(
@@ -88,34 +91,31 @@ export async function resetSafetyRecoveryAction(formData: FormData) {
     );
   }
 
-  /*
-   * ==========================================================
-   * PROTECTED DATABASE RESET
-   * ==========================================================
-   *
-   * This should NOT:
-   * - Enable Master Sending
-   * - Resume stopped enrollments
-   * - Send an email
-   * - Create a pilot
-   *
-   * It clears only the automatic safety pause.
-   */
+  // ------------------------------------------------------------
+  // 4. Execute the EXACT database recovery function
+  //
+  // Database signature:
+  //
+  // reset_email_safety_after_recovery(
+  //   p_confirmation text,
+  //   p_note text
+  // )
+  // ------------------------------------------------------------
 
   const {
-    data: resultRaw,
+    data: resetData,
     error: resetError,
   } = await supabase.rpc(
     "reset_email_safety_after_recovery",
     {
       p_confirmation: confirmation,
-      p_note: note || null,
+      p_note: note,
     }
   );
 
   if (resetError) {
     console.error(
-      "RESET EMAIL SAFETY ERROR:",
+      "RESET EMAIL SAFETY AFTER RECOVERY ERROR:",
       resetError
     );
 
@@ -125,11 +125,23 @@ export async function resetSafetyRecoveryAction(formData: FormData) {
   }
 
   const result =
-    resultRaw as RecoveryResult | null;
+    (resetData ?? {}) as ResetResult;
 
-  if (!result?.success || !result?.reset) {
+  // ------------------------------------------------------------
+  // 5. Database function can reject recovery even without
+  //    returning a PostgreSQL error.
+  // ------------------------------------------------------------
+
+  if (result.success !== true) {
     const reason =
-      result?.reason || "reset_blocked";
+      result.reason ||
+      result.message ||
+      "reset_rejected";
+
+    console.error(
+      "SAFETY RESET REJECTED:",
+      result
+    );
 
     redirect(
       `/admin/monitoring/safety?recovery_error=${encodeURIComponent(
@@ -138,23 +150,26 @@ export async function resetSafetyRecoveryAction(formData: FormData) {
     );
   }
 
-  /*
-   * ==========================================================
-   * REFRESH PRODUCTION UI
-   * ==========================================================
-   */
+  // ------------------------------------------------------------
+  // 6. Refresh production dashboards
+  // ------------------------------------------------------------
 
-  revalidatePath("/admin/dashboard");
-  revalidatePath("/admin/monitoring");
   revalidatePath("/admin/monitoring/safety");
+  revalidatePath("/admin/monitoring");
   revalidatePath("/admin/settings");
   revalidatePath("/admin/pilot");
+  revalidatePath("/admin/dashboard");
 
-  /*
-   * ==========================================================
-   * SUCCESS
-   * ==========================================================
-   */
+  // ------------------------------------------------------------
+  // IMPORTANT:
+  // This ONLY clears the automatic safety lock.
+  //
+  // It does NOT:
+  // - enable Master Sending
+  // - restart stopped enrollments
+  // - create a pilot
+  // - send any email
+  // ------------------------------------------------------------
 
   redirect(
     "/admin/monitoring/safety?recovery_success=1"
