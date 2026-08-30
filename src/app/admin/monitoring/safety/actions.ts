@@ -1,193 +1,345 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
-import { createServerSupabase } from "@/lib/supabase/server";
+import "server-only";
+
+import {
+  revalidatePath,
+} from "next/cache";
+
+import {
+  redirect,
+} from "next/navigation";
+
+import {
+  createAdminSupabase,
+} from "@/lib/supabase/admin";
+
+
+/*
+ * ============================================================
+ * TYPES
+ * ============================================================
+ */
 
 type RecoveryReadiness = {
   success?: boolean;
+
   ready?: boolean;
+
   reason?: string | null;
+
   auto_paused?: boolean;
+
   pause_reason?: string | null;
+
   active_enrollments?: number;
+
   unfinished_pilots?: number;
+
+  sends?: number;
+
+  bounces?: number;
+
+  failures?: number;
+
+  complaints?: number;
 };
+
 
 type ResetResult = {
   success?: boolean;
+
   reason?: string | null;
+
   message?: string | null;
+
   previous_pause_reason?: string | null;
+
+  recovered_at?: string | null;
 };
 
-function safetyUrl(error?: string) {
+
+/*
+ * ============================================================
+ * HELPERS
+ * ============================================================
+ */
+
+function getFormValue(
+  formData: FormData,
+  key: string
+) {
+  return String(
+    formData.get(key) ?? ""
+  ).trim();
+}
+
+
+function recoveryUrl(
+  error?: string
+) {
   if (!error) {
     return "/admin/monitoring/safety";
   }
 
-  return `/admin/monitoring/safety?recovery_error=${encodeURIComponent(
-    error
-  )}`;
+  return (
+    "/admin/monitoring/safety" +
+    `?recovery_error=${encodeURIComponent(
+      error
+    )}`
+  );
 }
+
+
+/*
+ * ============================================================
+ * RESET SAFETY RECOVERY ACTION
+ * ============================================================
+ */
 
 export async function resetSafetyRecoveryAction(
   formData: FormData
 ) {
   /*
-   * ============================================================
-   * READ FORM VALUES
-   * ============================================================
+   * ----------------------------------------------------------
+   * 1. READ FORM VALUES
+   * ----------------------------------------------------------
    */
 
-  const confirmation = String(
-    formData.get("confirmation") ?? ""
-  ).trim();
+  const confirmation =
+    getFormValue(
+      formData,
+      "confirmation"
+    );
 
-  const note = String(
-    formData.get("note") ?? ""
-  ).trim();
+  const note =
+    getFormValue(
+      formData,
+      "note"
+    );
+
 
   /*
-   * ============================================================
-   * BASIC PROTECTION
-   * ============================================================
+   * ----------------------------------------------------------
+   * 2. REQUIRE MANUAL CONFIRMATION
+   * ----------------------------------------------------------
    */
 
-  if (confirmation !== "RESET SAFETY") {
-    redirect(safetyUrl("confirmation_required"));
+  if (
+    confirmation !==
+    "RESET SAFETY"
+  ) {
+    redirect(
+      recoveryUrl(
+        "confirmation_required"
+      )
+    );
   }
 
-  if (!note) {
-    redirect(safetyUrl("note_required"));
-  }
 
   /*
-   * ============================================================
-   * SUPABASE
-   * ============================================================
+   * ----------------------------------------------------------
+   * 3. REQUIRE RECOVERY NOTE
+   * ----------------------------------------------------------
    */
 
-  const supabase = await createServerSupabase();
+  if (
+    note.length < 5
+  ) {
+    redirect(
+      recoveryUrl(
+        "note_required"
+      )
+    );
+  }
+
 
   /*
-   * ============================================================
-   * CHECK RECOVERY READINESS AGAIN
+   * ----------------------------------------------------------
+   * 4. USE ADMIN SUPABASE
    *
-   * Never trust only what the browser displayed.
-   * Re-check immediately before performing reset.
-   * ============================================================
+   * This is a protected server-only recovery operation.
+   *
+   * Do NOT use createServerSupabase here.
+   * ----------------------------------------------------------
+   */
+
+  const supabase =
+    createAdminSupabase();
+
+
+  /*
+   * ----------------------------------------------------------
+   * 5. RE-CHECK RECOVERY READINESS
+   *
+   * Never trust only the state that was rendered in browser.
+   * Check again immediately before reset.
+   * ----------------------------------------------------------
    */
 
   const {
-    data: readinessData,
+    data: readinessRaw,
     error: readinessError,
   } = await supabase.rpc(
     "email_safety_recovery_readiness"
   );
 
-  if (readinessError) {
+
+  if (
+    readinessError
+  ) {
     console.error(
-      "SAFETY RECOVERY READINESS ERROR:",
+      "SAFETY RECOVERY READINESS RPC ERROR:",
       readinessError
     );
 
     redirect(
-      safetyUrl("readiness_check_failed")
-    );
-  }
-
-  const readiness =
-    (readinessData as RecoveryReadiness | null) ??
-    {};
-
-  if (readiness.ready !== true) {
-    console.error(
-      "SAFETY RECOVERY NOT READY:",
-      readiness
-    );
-
-    redirect(
-      safetyUrl(
-        readiness.reason || "not_ready"
+      recoveryUrl(
+        "readiness_check_failed"
       )
     );
   }
 
+
+  const readiness =
+    (
+      readinessRaw as
+        | RecoveryReadiness
+        | null
+    ) ?? {};
+
+
   /*
-   * ============================================================
-   * RESET SAFETY
+   * ----------------------------------------------------------
+   * 6. BLOCK RESET IF SAFETY REQUIREMENTS CHANGED
+   * ----------------------------------------------------------
+   */
+
+  if (
+    readiness.ready !==
+    true
+  ) {
+    console.error(
+      "SAFETY RECOVERY BLOCKED:",
+      readiness
+    );
+
+    redirect(
+      recoveryUrl(
+        readiness.reason ||
+          "not_ready"
+      )
+    );
+  }
+
+
+  /*
+   * ----------------------------------------------------------
+   * 7. EXECUTE PROTECTED RESET
    *
-   * IMPORTANT:
+   * PostgreSQL signature:
    *
-   * PostgreSQL function arguments are:
+   * reset_email_safety_after_recovery(
+   *   p_confirmation text,
+   *   p_note text
+   * )
    *
-   * p_confirmation text
-   * p_note text
-   *
-   * Supabase RPC parameter names MUST match those names exactly.
-   * ============================================================
+   * Parameter names must match exactly.
+   * ----------------------------------------------------------
    */
 
   const {
-    data: resetData,
+    data: resetRaw,
     error: resetError,
   } = await supabase.rpc(
     "reset_email_safety_after_recovery",
     {
-      p_confirmation: confirmation,
-      p_note: note,
+      p_confirmation:
+        confirmation,
+
+      p_note:
+        note,
     }
   );
 
+
   /*
-   * ============================================================
-   * DATABASE/RPC ERROR
-   * ============================================================
+   * ----------------------------------------------------------
+   * 8. RPC / DATABASE FAILURE
+   * ----------------------------------------------------------
    */
 
-  if (resetError) {
+  if (
+    resetError
+  ) {
     console.error(
-      "SAFETY RESET RPC ERROR:",
-      resetError
+      "RESET EMAIL SAFETY RPC ERROR:",
+      {
+        message:
+          resetError.message,
+
+        details:
+          resetError.details,
+
+        hint:
+          resetError.hint,
+
+        code:
+          resetError.code,
+      }
     );
 
     redirect(
-      safetyUrl("reset_failed")
+      recoveryUrl(
+        "reset_failed"
+      )
     );
   }
 
+
+  /*
+   * ----------------------------------------------------------
+   * 9. CHECK FUNCTION RESULT
+   * ----------------------------------------------------------
+   */
+
   const result =
-    (resetData as ResetResult | null) ?? {};
+    (
+      resetRaw as
+        | ResetResult
+        | null
+    ) ?? {};
+
 
   console.log(
     "SAFETY RESET RESULT:",
     result
   );
 
-  /*
-   * ============================================================
-   * FUNCTION RETURNED A CONTROLLED FAILURE
-   * ============================================================
-   */
 
-  if (result.success !== true) {
+  if (
+    result.success !==
+    true
+  ) {
     console.error(
-      "SAFETY RESET BLOCKED:",
+      "SAFETY RESET REJECTED:",
       result
     );
 
     redirect(
-      safetyUrl(
-        result.reason || "reset_blocked"
+      recoveryUrl(
+        result.reason ||
+          result.message ||
+          "reset_blocked"
       )
     );
   }
 
+
   /*
-   * ============================================================
-   * REFRESH ADMIN PAGES
-   * ============================================================
+   * ----------------------------------------------------------
+   * 10. REVALIDATE PRODUCTION ADMIN PAGES
+   * ----------------------------------------------------------
    */
 
   revalidatePath(
@@ -210,13 +362,22 @@ export async function resetSafetyRecoveryAction(
     "/admin/dashboard"
   );
 
+
   /*
-   * ============================================================
-   * SUCCESS
+   * ----------------------------------------------------------
+   * 11. SUCCESS
    *
-   * Keep redirect OUTSIDE a try/catch.
-   * Next.js redirect() intentionally throws internally.
-   * ============================================================
+   * IMPORTANT:
+   *
+   * This does NOT:
+   *
+   * - enable Master Sending
+   * - restart stopped enrollments
+   * - create a new pilot
+   * - send any email
+   *
+   * It only clears the automatic safety lock.
+   * ----------------------------------------------------------
    */
 
   redirect(
