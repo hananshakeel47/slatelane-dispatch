@@ -34,17 +34,34 @@ type SafetyStatus = {
 };
 
 
+type PilotBypassState = {
+  valid: boolean;
+  reason: string | null;
+
+  pilotMode: boolean;
+  pilotLimit: number;
+
+  armedBatchCount: number;
+  batchId: string | null;
+
+  requestedCount: number;
+  preparedCount: number;
+
+  memberEnrollmentIds: string[];
+
+  activeEnrollmentCount: number;
+  pilotActiveEnrollmentCount: number;
+  nonPilotActiveEnrollmentCount: number;
+};
+
+
 function toBoolean(
   value: unknown
 ) {
-  if (
+  return (
     value === true ||
     value === "true"
-  ) {
-    return true;
-  }
-
-  return false;
+  );
 }
 
 
@@ -153,7 +170,7 @@ function isInsideSendingWindow(
    * Normal daytime window.
    *
    * Example:
-   * 09:00 → 17:00
+   * 09:00 -> 17:00
    */
   if (
     startHour < endHour
@@ -169,7 +186,7 @@ function isInsideSendingWindow(
    * Overnight window.
    *
    * Example:
-   * 22:00 → 06:00
+   * 22:00 -> 06:00
    */
   if (
     startHour > endHour
@@ -182,8 +199,7 @@ function isInsideSendingWindow(
 
 
   /*
-   * Same start and end is treated
-   * as an invalid/closed window.
+   * Same start and end means closed.
    */
   return false;
 }
@@ -279,13 +295,10 @@ async function getCandidateEnrollments(
 
   /*
    * DRY RUN:
+   * inspect active enrollments even when future scheduled.
    *
-   * Inspect active enrollments even when
-   * their next send time is still in the future.
-   *
-   * LIVE RUN:
-   *
-   * Only inspect enrollments actually due now.
+   * LIVE:
+   * only enrollments that are due now.
    */
   if (
     !dryRun
@@ -396,11 +409,8 @@ async function permanentlyBlockEnrollment(
 
 
 /*
- * These reasons represent temporary state changes
- * rather than permanently unsafe email addresses.
- *
- * We must NOT permanently stop an enrollment merely
- * because the global Safety Center is temporarily locked.
+ * Temporary conditions must not permanently
+ * destroy an enrollment.
  */
 function isTemporarySafetyReason(
   reason: string
@@ -411,6 +421,451 @@ function isTemporarySafetyReason(
   ].includes(
     reason
   );
+}
+
+
+/*
+ * ============================================================
+ * ARMED PILOT BYPASS
+ * ============================================================
+ *
+ * Master Sending can stay OFF while an explicitly armed pilot
+ * continues.
+ *
+ * Fail-closed requirements:
+ *
+ * 1. pilot_mode must be ON
+ * 2. exactly ONE pilot batch must be ARMED
+ * 3. pilot must contain enrollment IDs
+ * 4. pilot size must not exceed pilot_limit
+ * 5. prepared/member counts must agree
+ * 6. EVERY active enrollment in the database must belong to
+ *    this armed pilot
+ *
+ * Requirement #6 is especially important because the existing
+ * sequence processor accepts a numeric limit, not a list of
+ * explicit enrollment IDs.
+ *
+ * Therefore we refuse pilot bypass if even one unrelated active
+ * enrollment exists.
+ */
+async function getPilotBypassState(
+  settings: Record<
+    string,
+    unknown
+  >
+): Promise<PilotBypassState> {
+
+  const supabase =
+    createAdminSupabase();
+
+
+  const pilotMode =
+    toBoolean(
+      settings.pilot_mode
+    );
+
+
+  const pilotLimit =
+    clampInteger(
+      settings.pilot_limit,
+      0,
+      0,
+      1000
+    );
+
+
+  const emptyState:
+    PilotBypassState = {
+      valid: false,
+      reason: null,
+
+      pilotMode,
+      pilotLimit,
+
+      armedBatchCount: 0,
+      batchId: null,
+
+      requestedCount: 0,
+      preparedCount: 0,
+
+      memberEnrollmentIds: [],
+
+      activeEnrollmentCount: 0,
+      pilotActiveEnrollmentCount: 0,
+      nonPilotActiveEnrollmentCount: 0,
+    };
+
+
+  if (
+    !pilotMode
+  ) {
+    return {
+      ...emptyState,
+      reason:
+        "pilot_mode_disabled",
+    };
+  }
+
+
+  if (
+    pilotLimit <=
+    0
+  ) {
+    return {
+      ...emptyState,
+      reason:
+        "invalid_pilot_limit",
+    };
+  }
+
+
+  const {
+    data: armedBatches,
+    error: armedError,
+  } =
+    await supabase
+      .from(
+        "email_pilot_batches"
+      )
+      .select(`
+        id,
+        status,
+        requested_count,
+        prepared_count,
+        created_at
+      `)
+      .eq(
+        "status",
+        "armed"
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        }
+      )
+      .limit(2);
+
+
+  if (
+    armedError
+  ) {
+    throw new Error(
+      `Could not inspect armed pilot batches: ${armedError.message}`
+    );
+  }
+
+
+  const armedBatchCount =
+    armedBatches?.length ??
+    0;
+
+
+  if (
+    armedBatchCount ===
+    0
+  ) {
+    return {
+      ...emptyState,
+      armedBatchCount,
+      reason:
+        "no_armed_pilot",
+    };
+  }
+
+
+  if (
+    armedBatchCount !==
+    1
+  ) {
+    return {
+      ...emptyState,
+      armedBatchCount,
+      reason:
+        "multiple_armed_pilots",
+    };
+  }
+
+
+  const batch =
+    armedBatches![0];
+
+
+  const batchId =
+    String(
+      batch.id
+    );
+
+
+  const requestedCount =
+    Math.max(
+      0,
+      Number(
+        batch.requested_count ??
+        0
+      )
+    );
+
+
+  const preparedCount =
+    Math.max(
+      0,
+      Number(
+        batch.prepared_count ??
+        0
+      )
+    );
+
+
+  const {
+    data: members,
+    error: membersError,
+  } =
+    await supabase
+      .from(
+        "email_pilot_members"
+      )
+      .select(`
+        enrollment_id
+      `)
+      .eq(
+        "batch_id",
+        batchId
+      );
+
+
+  if (
+    membersError
+  ) {
+    throw new Error(
+      `Could not inspect armed pilot members: ${membersError.message}`
+    );
+  }
+
+
+  const memberEnrollmentIds =
+    Array.from(
+      new Set(
+        (
+          members ??
+          []
+        )
+          .map(
+            (member) =>
+              member.enrollment_id
+          )
+          .filter(
+            (
+              value
+            ): value is string =>
+              typeof value ===
+                "string" &&
+              value.length >
+                0
+          )
+      )
+    );
+
+
+  const baseState:
+    PilotBypassState = {
+      ...emptyState,
+
+      armedBatchCount,
+      batchId,
+
+      requestedCount,
+      preparedCount,
+
+      memberEnrollmentIds,
+    };
+
+
+  if (
+    memberEnrollmentIds.length ===
+    0
+  ) {
+    return {
+      ...baseState,
+      reason:
+        "armed_pilot_has_no_enrollments",
+    };
+  }
+
+
+  if (
+    memberEnrollmentIds.length >
+    pilotLimit
+  ) {
+    return {
+      ...baseState,
+      reason:
+        "armed_pilot_exceeds_pilot_limit",
+    };
+  }
+
+
+  /*
+   * Prepared count should describe the same
+   * immutable pilot membership we are about
+   * to authorize.
+   */
+  if (
+    preparedCount !==
+    memberEnrollmentIds.length
+  ) {
+    return {
+      ...baseState,
+      reason:
+        "pilot_member_count_mismatch",
+    };
+  }
+
+
+  const {
+    count:
+      activeEnrollmentCountRaw,
+
+    error:
+      activeEnrollmentCountError,
+  } =
+    await supabase
+      .from(
+        "email_sequence_enrollments"
+      )
+      .select(
+        "id",
+        {
+          count: "exact",
+          head: true,
+        }
+      )
+      .eq(
+        "status",
+        "active"
+      );
+
+
+  if (
+    activeEnrollmentCountError
+  ) {
+    throw new Error(
+      `Could not count active enrollments: ${activeEnrollmentCountError.message}`
+    );
+  }
+
+
+  const {
+    count:
+      pilotActiveEnrollmentCountRaw,
+
+    error:
+      pilotActiveEnrollmentCountError,
+  } =
+    await supabase
+      .from(
+        "email_sequence_enrollments"
+      )
+      .select(
+        "id",
+        {
+          count: "exact",
+          head: true,
+        }
+      )
+      .eq(
+        "status",
+        "active"
+      )
+      .in(
+        "id",
+        memberEnrollmentIds
+      );
+
+
+  if (
+    pilotActiveEnrollmentCountError
+  ) {
+    throw new Error(
+      `Could not count active pilot enrollments: ${pilotActiveEnrollmentCountError.message}`
+    );
+  }
+
+
+  const activeEnrollmentCount =
+    activeEnrollmentCountRaw ??
+    0;
+
+
+  const pilotActiveEnrollmentCount =
+    pilotActiveEnrollmentCountRaw ??
+    0;
+
+
+  const nonPilotActiveEnrollmentCount =
+    Math.max(
+      0,
+      activeEnrollmentCount -
+      pilotActiveEnrollmentCount
+    );
+
+
+  const isolationState:
+    PilotBypassState = {
+      ...baseState,
+
+      activeEnrollmentCount,
+
+      pilotActiveEnrollmentCount,
+
+      nonPilotActiveEnrollmentCount,
+    };
+
+
+  /*
+   * Critical isolation rule.
+   *
+   * Because processDueEmailEnrollments() receives only
+   * a limit, not explicit enrollment IDs, we permit the
+   * bypass only if there is ZERO unrelated active work.
+   */
+  if (
+    nonPilotActiveEnrollmentCount >
+    0
+  ) {
+    return {
+      ...isolationState,
+      reason:
+        "non_pilot_active_enrollments_present",
+    };
+  }
+
+
+  /*
+   * An armed pilot with no active enrollments may simply
+   * be waiting for the automatic completion watcher.
+   *
+   * There is nothing to send, so no bypass is needed.
+   */
+  if (
+    activeEnrollmentCount ===
+    0
+  ) {
+    return {
+      ...isolationState,
+      reason:
+        "armed_pilot_has_no_active_enrollments",
+    };
+  }
+
+
+  return {
+    ...isolationState,
+
+    valid: true,
+    reason: null,
+  };
 }
 
 
@@ -512,7 +967,17 @@ export async function POST(
 
 
     const settings =
-      snapshot.settings;
+      snapshot.settings as
+        Record<
+          string,
+          unknown
+        >;
+
+
+    const masterSending =
+      toBoolean(
+        settings.sending_enabled
+      );
 
 
     const maxBatchSize =
@@ -588,7 +1053,7 @@ export async function POST(
 
 
     // ========================================================
-    // SAFETY CENTER STATUS
+    // SAFETY CENTER
     // ========================================================
 
     const safetyStatus =
@@ -596,14 +1061,30 @@ export async function POST(
 
 
     // ========================================================
+    // PILOT BYPASS PREFLIGHT
+    // ========================================================
+
+    let pilotBypass:
+      PilotBypassState | null =
+      null;
+
+
+    /*
+     * We only need the special pilot path while the
+     * production Master Sending switch is OFF.
+     */
+    if (
+      !masterSending
+    ) {
+      pilotBypass =
+        await getPilotBypassState(
+          settings
+        );
+    }
+
+
+    // ========================================================
     // DRY RUN
-    //
-    // Critical:
-    // - sends nothing
-    // - stops nothing
-    // - changes nothing
-    //
-    // It only reports what the safety gate WOULD do.
     // ========================================================
 
     if (
@@ -669,24 +1150,24 @@ export async function POST(
         if (
           allowed
         ) {
-          allowedCount += 1;
+          allowedCount +=
+            1;
         } else {
-          blockedCount += 1;
+          blockedCount +=
+            1;
         }
 
 
         reasons[reason] =
           (
-            reasons[reason] ??
+            reasons[
+              reason
+            ] ??
             0
           ) +
           1;
 
 
-        /*
-         * Do not expose unnecessary carrier data.
-         * We only return IDs + safety result.
-         */
         if (
           checks.length <
           25
@@ -711,10 +1192,40 @@ export async function POST(
         message:
           "Safety dry run completed. No email was sent and no enrollment was changed.",
 
-        masterSending:
-          Boolean(
-            settings.sending_enabled
-          ),
+        masterSending,
+
+        pilotBypassEligible:
+          masterSending
+            ? false
+            : Boolean(
+                pilotBypass?.valid
+              ),
+
+        pilotBypassReason:
+          masterSending
+            ? "master_sending_enabled"
+            : pilotBypass?.reason ??
+              null,
+
+        armedPilotBatchId:
+          pilotBypass?.batchId ??
+          null,
+
+        armedPilotMembers:
+          pilotBypass
+            ?.memberEnrollmentIds
+            .length ??
+          0,
+
+        activeEnrollmentCount:
+          pilotBypass
+            ?.activeEnrollmentCount ??
+          candidates.length,
+
+        nonPilotActiveEnrollmentCount:
+          pilotBypass
+            ?.nonPilotActiveEnrollmentCount ??
+          null,
 
         safetyAutoPaused:
           safetyStatus.auto_paused,
@@ -748,43 +1259,76 @@ export async function POST(
 
 
     // ========================================================
-    // LIVE PRODUCTION GUARDS
+    // MASTER SENDING / ARMED PILOT AUTHORIZATION
     // ========================================================
 
+    let operatingMode:
+      "production" |
+      "armed_pilot";
+
+
     if (
-      !settings.sending_enabled
+      masterSending
     ) {
-      return NextResponse.json({
-        success: true,
+      operatingMode =
+        "production";
 
-        blocked: true,
+    } else {
 
-        reason:
-          "sending_disabled",
+      if (
+        !pilotBypass?.valid
+      ) {
+        return NextResponse.json({
+          success: true,
 
-        message:
-          "Automated sending is disabled by the production master switch.",
+          blocked: true,
 
-        sentToday,
+          reason:
+            "sending_disabled",
 
-        effectiveCap,
+          pilotBypassReason:
+            pilotBypass?.reason ??
+            "pilot_bypass_unavailable",
 
-        remainingToday,
+          message:
+            "Master Sending is OFF and no safely isolated armed pilot is authorized for processing.",
 
-        processed: 0,
+          armedPilotBatchId:
+            pilotBypass?.batchId ??
+            null,
 
-        results: [],
-      });
+          activeEnrollmentCount:
+            pilotBypass
+              ?.activeEnrollmentCount ??
+            0,
+
+          nonPilotActiveEnrollmentCount:
+            pilotBypass
+              ?.nonPilotActiveEnrollmentCount ??
+            0,
+
+          sentToday,
+
+          effectiveCap,
+
+          remainingToday,
+
+          processed: 0,
+
+          results: [],
+        });
+      }
+
+
+      operatingMode =
+        "armed_pilot";
     }
 
 
-    /*
-     * Global emergency lock.
-     *
-     * IMPORTANT:
-     * We do not stop enrollments here because
-     * auto-pause may later be investigated/reset.
-     */
+    // ========================================================
+    // GLOBAL SAFETY LOCK
+    // ========================================================
+
     if (
       safetyStatus.auto_paused
     ) {
@@ -795,6 +1339,8 @@ export async function POST(
 
         reason:
           "global_safety_auto_paused",
+
+        operatingMode,
 
         safetyPauseReason:
           safetyStatus.pause_reason,
@@ -815,6 +1361,10 @@ export async function POST(
     }
 
 
+    // ========================================================
+    // SENDING WINDOW
+    // ========================================================
+
     if (
       !insideWindow
     ) {
@@ -825,6 +1375,8 @@ export async function POST(
 
         reason:
           "outside_sending_window",
+
+        operatingMode,
 
         message:
           "Current time is outside the configured production sending window.",
@@ -848,6 +1400,10 @@ export async function POST(
     }
 
 
+    // ========================================================
+    // DAILY CAP
+    // ========================================================
+
     if (
       remainingToday <=
       0
@@ -859,6 +1415,8 @@ export async function POST(
 
         reason:
           "daily_cap_reached",
+
+        operatingMode,
 
         message:
           "The daily production email cap has been reached.",
@@ -877,7 +1435,7 @@ export async function POST(
 
 
     // ========================================================
-    // DETERMINE SAFE BATCH SIZE
+    // SAFE BATCH SIZE
     // ========================================================
 
     const batchLimit =
@@ -897,6 +1455,9 @@ export async function POST(
     ) {
       return NextResponse.json({
         success: true,
+
+        operatingMode,
+
         processed: 0,
         results: [],
       });
@@ -904,11 +1465,7 @@ export async function POST(
 
 
     // ========================================================
-    // LOAD ALL CURRENTLY DUE ENROLLMENTS
-    //
-    // We inspect more than the requested batch so that if an
-    // unsafe enrollment gets stopped, the sequence processor
-    // cannot simply pull another unchecked due enrollment.
+    // LOAD CURRENTLY DUE ENROLLMENTS
     // ========================================================
 
     const dueEnrollments =
@@ -925,6 +1482,8 @@ export async function POST(
         success: true,
 
         blocked: false,
+
+        operatingMode,
 
         message:
           "No email sequence enrollment is currently due.",
@@ -947,7 +1506,61 @@ export async function POST(
 
 
     // ========================================================
-    // PHASE 020 PRE-SEND SAFETY PREFLIGHT
+    // PILOT DUE-ENROLLMENT ISOLATION
+    // ========================================================
+
+    if (
+      operatingMode ===
+      "armed_pilot"
+    ) {
+
+      const pilotIds =
+        new Set(
+          pilotBypass!
+            .memberEnrollmentIds
+        );
+
+
+      const foreignDueEnrollment =
+        dueEnrollments.find(
+          (enrollment) =>
+            !pilotIds.has(
+              enrollment.id
+            )
+        );
+
+
+      if (
+        foreignDueEnrollment
+      ) {
+        return NextResponse.json({
+          success: true,
+
+          blocked: true,
+
+          reason:
+            "non_pilot_due_enrollment_detected",
+
+          operatingMode,
+
+          message:
+            "Pilot processing was blocked because a due active enrollment exists outside the armed pilot.",
+
+          armedPilotBatchId:
+            pilotBypass?.batchId,
+
+          safetyChecked: 0,
+
+          processed: 0,
+
+          results: [],
+        });
+      }
+    }
+
+
+    // ========================================================
+    // FINAL ENROLLMENT SAFETY PREFLIGHT
     // ========================================================
 
     let safeDueCount =
@@ -1002,10 +1615,6 @@ export async function POST(
       }
 
 
-      /*
-       * Safety Center might have triggered
-       * between the first status read and now.
-       */
       if (
         reason ===
         "global_safety_auto_paused"
@@ -1018,8 +1627,10 @@ export async function POST(
           reason:
             "global_safety_auto_paused",
 
+          operatingMode,
+
           message:
-            "Safety Center triggered during the final send-time preflight. No email was processed.",
+            "Safety Center triggered during final send-time preflight. No email was processed.",
 
           sentToday,
 
@@ -1039,10 +1650,6 @@ export async function POST(
       }
 
 
-      /*
-       * Enrollment may have been stopped by
-       * a webhook/reply while this request was running.
-       */
       if (
         isTemporarySafetyReason(
           reason
@@ -1052,11 +1659,6 @@ export async function POST(
       }
 
 
-      /*
-       * Permanent carrier/lead/email safety failure.
-       *
-       * Stop enrollment and save an audit record.
-       */
       await permanentlyBlockEnrollment(
         enrollment.id,
         reason,
@@ -1068,7 +1670,9 @@ export async function POST(
         1;
 
 
-      blockedReasons[reason] =
+      blockedReasons[
+        reason
+      ] =
         (
           blockedReasons[
             reason
@@ -1095,6 +1699,8 @@ export async function POST(
         reason:
           "no_safe_due_enrollments",
 
+        operatingMode,
+
         message:
           "All currently due enrollments were rejected by the final safety gate.",
 
@@ -1119,11 +1725,25 @@ export async function POST(
 
 
     // ========================================================
-    // RECHECK GLOBAL CONTROLS IMMEDIATELY BEFORE PROCESSING
+    // FINAL GLOBAL CONTROL RECHECK
     // ========================================================
 
     const finalSnapshot =
       await getLaunchSnapshot();
+
+
+    const finalSettings =
+      finalSnapshot.settings as
+        Record<
+          string,
+          unknown
+        >;
+
+
+    const finalMasterSending =
+      toBoolean(
+        finalSettings.sending_enabled
+      );
 
 
     const finalSafetyStatus =
@@ -1131,36 +1751,7 @@ export async function POST(
 
 
     if (
-      !finalSnapshot
-        .settings
-        .sending_enabled
-    ) {
-      return NextResponse.json({
-        success: true,
-
-        blocked: true,
-
-        reason:
-          "sending_disabled_before_send",
-
-        message:
-          "Master Sending was disabled during the safety preflight. No email was processed.",
-
-        safetyChecked:
-          dueEnrollments.length,
-
-        safetyBlocked,
-
-        processed: 0,
-
-        results: [],
-      });
-    }
-
-
-    if (
-      finalSafetyStatus
-        .auto_paused
+      finalSafetyStatus.auto_paused
     ) {
       return NextResponse.json({
         success: true,
@@ -1169,6 +1760,8 @@ export async function POST(
 
         reason:
           "global_safety_auto_paused_before_send",
+
+        operatingMode,
 
         safetyPauseReason:
           finalSafetyStatus.pause_reason,
@@ -1188,8 +1781,120 @@ export async function POST(
     }
 
 
+    /*
+     * If we're operating under the armed-pilot exception,
+     * revalidate the entire exception immediately before send.
+     */
+    if (
+      operatingMode ===
+      "armed_pilot" &&
+      !finalMasterSending
+    ) {
+
+      const finalPilotBypass =
+        await getPilotBypassState(
+          finalSettings
+        );
+
+
+      if (
+        !finalPilotBypass.valid
+      ) {
+        return NextResponse.json({
+          success: true,
+
+          blocked: true,
+
+          reason:
+            "pilot_authorization_changed_before_send",
+
+          operatingMode,
+
+          pilotBypassReason:
+            finalPilotBypass.reason,
+
+          message:
+            "Armed pilot authorization changed during preflight. No email was processed.",
+
+          safetyChecked:
+            dueEnrollments.length,
+
+          safetyBlocked,
+
+          processed: 0,
+
+          results: [],
+        });
+      }
+
+
+      if (
+        finalPilotBypass
+          .batchId !==
+        pilotBypass?.batchId
+      ) {
+        return NextResponse.json({
+          success: true,
+
+          blocked: true,
+
+          reason:
+            "armed_pilot_changed_before_send",
+
+          operatingMode,
+
+          message:
+            "The armed pilot batch changed during preflight. No email was processed.",
+
+          safetyChecked:
+            dueEnrollments.length,
+
+          safetyBlocked,
+
+          processed: 0,
+
+          results: [],
+        });
+      }
+    }
+
+
+    /*
+     * Normal production mode must still have
+     * Master Sending ON at the exact send point.
+     */
+    if (
+      operatingMode ===
+        "production" &&
+      !finalMasterSending
+    ) {
+      return NextResponse.json({
+        success: true,
+
+        blocked: true,
+
+        reason:
+          "sending_disabled_before_send",
+
+        operatingMode,
+
+        message:
+          "Master Sending was disabled during preflight. No email was processed.",
+
+        safetyChecked:
+          dueEnrollments.length,
+
+        safetyBlocked,
+
+        processed: 0,
+
+        results: [],
+      });
+    }
+
+
     // ========================================================
-    // ACTUAL EMAIL PROCESSOR
+    // ACTUAL PROCESSOR
     // ========================================================
 
     const finalLimit =
@@ -1208,6 +1913,8 @@ export async function POST(
     ) {
       return NextResponse.json({
         success: true,
+
+        operatingMode,
 
         safetyChecked:
           dueEnrollments.length,
@@ -1237,7 +1944,18 @@ export async function POST(
       success: true,
 
       phase:
-        "020B-send-time-safety",
+        "025-armed-pilot-processing",
+
+      operatingMode,
+
+      masterSending:
+        finalMasterSending,
+
+      armedPilotBatchId:
+        operatingMode ===
+          "armed_pilot"
+          ? pilotBypass?.batchId
+          : null,
 
       safetyChecked:
         dueEnrollments.length,
@@ -1273,8 +1991,6 @@ export async function POST(
 
     /*
      * FAIL CLOSED.
-     *
-     * Any unexpected preflight error prevents processing.
      */
     return NextResponse.json(
       {
