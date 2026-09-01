@@ -311,8 +311,7 @@ export default async function PilotCommandCenterPage() {
   const dangerousEvents =
     number(command.bounced_count) + number(command.failed_count);
 
-  const healthy =
-    dangerousEvents === 0 && paused === 0;
+  const healthy = dangerousEvents === 0 && paused === 0;
 
   return (
     <main className="min-h-screen bg-[#07090a] px-6 py-8 text-white lg:px-10">
@@ -515,7 +514,7 @@ export default async function PilotCommandCenterPage() {
         <section className="mt-6 grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-zinc-800 bg-[#111315] p-5">
             <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-              Next Scheduled Processing
+              Earliest Next Follow-Up
             </div>
 
             <div className="mt-3 text-xl font-bold">
@@ -529,7 +528,7 @@ export default async function PilotCommandCenterPage() {
 
           <div className="rounded-2xl border border-zinc-800 bg-[#111315] p-5">
             <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-              Last Scheduled Pilot Send
+              Latest Next Follow-Up
             </div>
 
             <div className="mt-3 text-xl font-bold">
@@ -650,7 +649,9 @@ export default async function PilotCommandCenterPage() {
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div>
-                <div className="text-xs uppercase text-zinc-500">Outcome</div>
+                <div className="text-xs uppercase text-zinc-500">
+                  Outcome
+                </div>
 
                 <div className="mt-1 font-bold uppercase text-emerald-300">
                   {command.completion_outcome ?? "unknown"}
@@ -717,7 +718,9 @@ export default async function PilotCommandCenterPage() {
         </section>
 
         <div className="mt-6 rounded-2xl border border-emerald-950 bg-emerald-950/10 p-5 text-sm text-zinc-400">
-          <strong className="text-emerald-400">Production protection:</strong>{" "}
+          <strong className="text-emerald-400">
+            Production protection:
+          </strong>{" "}
           this Command Center is read-only. It does not enable Master Sending,
           alter sequence timing, create pilots or transmit email.
         </div>
