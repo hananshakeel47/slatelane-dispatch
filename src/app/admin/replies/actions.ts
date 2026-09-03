@@ -1,21 +1,24 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import {
+  revalidatePath,
+} from "next/cache";
 
 import {
   createAdminSupabase,
 } from "@/lib/supabase/admin";
 
 
-const VALID_ACTIONS = new Set([
-  "handled",
-  "call_lead",
-  "sent_rates",
-  "interested",
-  "not_interested",
-  "wrong_contact",
-  "unsubscribe",
-]);
+const VALID_ACTIONS =
+  new Set([
+    "handled",
+    "call_lead",
+    "sent_rates",
+    "interested",
+    "not_interested",
+    "wrong_contact",
+    "unsubscribe",
+  ]);
 
 
 function leadStatusForAction(
@@ -49,32 +52,57 @@ function dueDateFromDelay(
   switch (delay) {
     case "1h":
       return new Date(
-        now + 60 * 60 * 1000
+        now +
+          60 *
+            60 *
+            1000
       ).toISOString();
 
     case "2h":
       return new Date(
-        now + 2 * 60 * 60 * 1000
+        now +
+          2 *
+            60 *
+            60 *
+            1000
       ).toISOString();
 
     case "24h":
       return new Date(
-        now + 24 * 60 * 60 * 1000
+        now +
+          24 *
+            60 *
+            60 *
+            1000
       ).toISOString();
 
     case "3d":
       return new Date(
-        now + 3 * 24 * 60 * 60 * 1000
+        now +
+          3 *
+            24 *
+            60 *
+            60 *
+            1000
       ).toISOString();
 
     case "7d":
       return new Date(
-        now + 7 * 24 * 60 * 60 * 1000
+        now +
+          7 *
+            24 *
+            60 *
+            60 *
+            1000
       ).toISOString();
 
     default:
       return new Date(
-        now + 24 * 60 * 60 * 1000
+        now +
+          24 *
+            60 *
+            60 *
+            1000
       ).toISOString();
   }
 }
@@ -87,31 +115,42 @@ async function stopLeadSequences(
     createAdminSupabase();
 
   const now =
-    new Date().toISOString();
+    new Date()
+      .toISOString();
+
 
   const {
     error,
-  } = await supabase
-    .from(
-      "email_sequence_enrollments"
-    )
-    .update({
-      status: "stopped",
-      stopped_at: now,
-      next_send_at: null,
-      updated_at: now,
-    })
-    .eq(
-      "lead_id",
-      leadId
-    )
-    .in(
-      "status",
-      [
-        "active",
-        "paused",
-      ]
-    );
+  } =
+    await supabase
+      .from(
+        "email_sequence_enrollments"
+      )
+      .update({
+        status:
+          "stopped",
+
+        stopped_at:
+          now,
+
+        next_send_at:
+          null,
+
+        updated_at:
+          now,
+      })
+      .eq(
+        "lead_id",
+        leadId
+      )
+      .in(
+        "status",
+        [
+          "active",
+          "paused",
+        ]
+      );
+
 
   if (error) {
     console.error(
@@ -146,8 +185,10 @@ async function createFollowUpTask({
     | "follow_up"
     | null = null;
 
+
   let title:
     string | null = null;
+
 
   let priority:
     "normal"
@@ -200,8 +241,9 @@ async function createFollowUpTask({
 
 
   /*
-   * Actions such as Mark Handled,
-   * Not Interested, Wrong Contact,
+   * Mark Handled,
+   * Not Interested,
+   * Wrong Contact and
    * Unsubscribe do not create tasks.
    */
   if (
@@ -212,35 +254,40 @@ async function createFollowUpTask({
   }
 
 
-  /*
-   * Double-click / duplicate protection.
-   */
+  // ==========================================================
+  // DUPLICATE TASK PROTECTION
+  // ==========================================================
+
   const {
-    data: existing,
+    data:
+      existing,
     error:
       existingError,
-  } = await supabase
-    .from(
-      "lead_tasks"
-    )
-    .select("id")
-    .eq(
-      "source_reply_id",
-      replyId
-    )
-    .eq(
-      "task_type",
-      taskType
-    )
-    .eq(
-      "status",
-      "open"
-    )
-    .limit(1)
-    .maybeSingle();
+  } =
+    await supabase
+      .from(
+        "lead_tasks"
+      )
+      .select("id")
+      .eq(
+        "source_reply_id",
+        replyId
+      )
+      .eq(
+        "task_type",
+        taskType
+      )
+      .eq(
+        "status",
+        "open"
+      )
+      .limit(1)
+      .maybeSingle();
 
 
-  if (existingError) {
+  if (
+    existingError
+  ) {
     throw new Error(
       `Could not check existing task: ${existingError.message}`
     );
@@ -253,42 +300,46 @@ async function createFollowUpTask({
 
 
   const {
-    data: task,
+    data:
+      task,
     error,
-  } = await supabase
-    .from(
-      "lead_tasks"
-    )
-    .insert({
-      lead_id:
-        leadId,
+  } =
+    await supabase
+      .from(
+        "lead_tasks"
+      )
+      .insert({
+        lead_id:
+          leadId,
 
-      source_reply_id:
-        replyId,
+        source_reply_id:
+          replyId,
 
-      task_type:
-        taskType,
+        task_type:
+          taskType,
 
-      title,
+        title,
 
-      note:
-        note || null,
+        note:
+          note ||
+          null,
 
-      status:
-        "open",
+        status:
+          "open",
 
-      priority,
+        priority,
 
-      due_at:
-        dueDateFromDelay(
-          followUpDelay
-        ),
+        due_at:
+          dueDateFromDelay(
+            followUpDelay
+          ),
 
-      updated_at:
-        new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+        updated_at:
+          new Date()
+            .toISOString(),
+      })
+      .select("id")
+      .single();
 
 
   if (
@@ -305,6 +356,39 @@ async function createFollowUpTask({
 
 
   return task;
+}
+
+
+function refreshReplyOperations(
+  leadId: string
+) {
+  revalidatePath(
+    "/admin/replies"
+  );
+
+  revalidatePath(
+    "/admin/tasks"
+  );
+
+  revalidatePath(
+    "/admin/dashboard"
+  );
+
+  revalidatePath(
+    "/admin/leads"
+  );
+
+  revalidatePath(
+    `/admin/leads/${leadId}`
+  );
+
+  revalidatePath(
+    "/admin/monitoring"
+  );
+
+  revalidatePath(
+    "/admin/pilot/command"
+  );
 }
 
 
@@ -386,27 +470,29 @@ export async function handleReplyAction(
   // ==========================================================
 
   const {
-    data: reply,
+    data:
+      reply,
     error:
       replyError,
-  } = await supabase
-    .from(
-      "email_replies"
-    )
-    .select(`
-      id,
-      lead_id,
-      handled
-    `)
-    .eq(
-      "id",
-      replyId
-    )
-    .eq(
-      "lead_id",
-      leadId
-    )
-    .maybeSingle();
+  } =
+    await supabase
+      .from(
+        "email_replies"
+      )
+      .select(`
+        id,
+        lead_id,
+        handled
+      `)
+      .eq(
+        "id",
+        replyId
+      )
+      .eq(
+        "lead_id",
+        leadId
+      )
+      .maybeSingle();
 
 
   if (
@@ -420,27 +506,46 @@ export async function handleReplyAction(
   }
 
 
+  /*
+   * Double-click / browser replay protection.
+   * Once handled, do not execute the action again.
+   */
+  if (
+    reply.handled
+  ) {
+    refreshReplyOperations(
+      leadId
+    );
+
+    return;
+  }
+
+
   // ==========================================================
   // LOAD LEAD
   // ==========================================================
 
   const {
-    data: lead,
+    data:
+      lead,
     error:
       leadError,
-  } = await supabase
-    .from("leads")
-    .select(`
-      id,
-      name,
-      company_name,
-      email
-    `)
-    .eq(
-      "id",
-      leadId
-    )
-    .maybeSingle();
+  } =
+    await supabase
+      .from(
+        "leads"
+      )
+      .select(`
+        id,
+        name,
+        company_name,
+        email
+      `)
+      .eq(
+        "id",
+        leadId
+      )
+      .maybeSingle();
 
 
   if (
@@ -462,8 +567,11 @@ export async function handleReplyAction(
 
 
   /*
-   * Create the task BEFORE marking the reply handled.
-   * If task creation fails, the reply stays open.
+   * Create the follow-up task BEFORE
+   * marking the reply handled.
+   *
+   * If task creation fails, the reply
+   * remains open and visible.
    */
   await createFollowUpTask({
     replyId,
@@ -476,7 +584,8 @@ export async function handleReplyAction(
 
 
   const now =
-    new Date().toISOString();
+    new Date()
+      .toISOString();
 
 
   // ==========================================================
@@ -486,30 +595,36 @@ export async function handleReplyAction(
   const {
     error:
       replyUpdateError,
-  } = await supabase
-    .from(
-      "email_replies"
-    )
-    .update({
-      handled:
-        true,
+  } =
+    await supabase
+      .from(
+        "email_replies"
+      )
+      .update({
+        handled:
+          true,
 
-      handled_at:
-        now,
+        handled_at:
+          now,
 
-      handled_action:
-        action,
+        handled_action:
+          action,
 
-      handled_note:
-        note || null,
+        handled_note:
+          note ||
+          null,
 
-      requires_attention:
-        false,
-    })
-    .eq(
-      "id",
-      replyId
-    );
+        requires_attention:
+          false,
+      })
+      .eq(
+        "id",
+        replyId
+      )
+      .eq(
+        "handled",
+        false
+      );
 
 
   if (
@@ -530,9 +645,9 @@ export async function handleReplyAction(
       string,
       unknown
     > = {
-    updated_at:
-      now,
-  };
+      updated_at:
+        now,
+    };
 
 
   const status =
@@ -562,7 +677,9 @@ export async function handleReplyAction(
       now;
 
 
-    if (lead.email) {
+    if (
+      lead.email
+    ) {
       const email =
         lead.email
           .trim()
@@ -572,25 +689,26 @@ export async function handleReplyAction(
       const {
         error:
           suppressionError,
-      } = await supabase
-        .from(
-          "email_suppressions"
-        )
-        .upsert(
-          {
-            email,
+      } =
+        await supabase
+          .from(
+            "email_suppressions"
+          )
+          .upsert(
+            {
+              email,
 
-            reason:
-              "unsubscribe",
+              reason:
+                "unsubscribe",
 
-            source:
-              "reply_handling",
-          },
-          {
-            onConflict:
-              "email",
-          }
-        );
+              source:
+                "reply_handling",
+            },
+            {
+              onConflict:
+                "email",
+            }
+          );
 
 
       if (
@@ -605,13 +723,17 @@ export async function handleReplyAction(
   }
 
 
+  // ==========================================================
+  // KEEP REPLIED LEAD OUT OF AUTOMATION
+  // ==========================================================
+
   await stopLeadSequences(
     leadId
   );
 
 
   // ==========================================================
-  // REMAINING OPEN REPLIES
+  // CHECK REMAINING OPEN REPLIES
   // ==========================================================
 
   const {
@@ -619,32 +741,33 @@ export async function handleReplyAction(
       remainingAttention,
     error:
       attentionError,
-  } = await supabase
-    .from(
-      "email_replies"
-    )
-    .select(
-      "id",
-      {
-        count:
-          "exact",
+  } =
+    await supabase
+      .from(
+        "email_replies"
+      )
+      .select(
+        "id",
+        {
+          count:
+            "exact",
 
-        head:
-          true,
-      }
-    )
-    .eq(
-      "lead_id",
-      leadId
-    )
-    .eq(
-      "requires_attention",
-      true
-    )
-    .eq(
-      "handled",
-      false
-    );
+          head:
+            true,
+        }
+      )
+      .eq(
+        "lead_id",
+        leadId
+      )
+      .eq(
+        "requires_attention",
+        true
+      )
+      .eq(
+        "handled",
+        false
+      );
 
 
   if (
@@ -667,15 +790,18 @@ export async function handleReplyAction(
   const {
     error:
       leadUpdateError,
-  } = await supabase
-    .from("leads")
-    .update(
-      leadUpdate
-    )
-    .eq(
-      "id",
-      leadId
-    );
+  } =
+    await supabase
+      .from(
+        "leads"
+      )
+      .update(
+        leadUpdate
+      )
+      .eq(
+        "id",
+        leadId
+      );
 
 
   if (
@@ -687,23 +813,11 @@ export async function handleReplyAction(
   }
 
 
-  revalidatePath(
-    "/admin/replies"
-  );
+  // ==========================================================
+  // REFRESH OPERATIONAL UI
+  // ==========================================================
 
-  revalidatePath(
-    "/admin/tasks"
-  );
-
-  revalidatePath(
-    "/admin/dashboard"
-  );
-
-  revalidatePath(
-    "/admin/leads"
-  );
-
-  revalidatePath(
-    `/admin/leads/${leadId}`
+  refreshReplyOperations(
+    leadId
   );
 }

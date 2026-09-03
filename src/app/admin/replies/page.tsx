@@ -25,6 +25,13 @@ type Props = {
 };
 
 
+type InboxView =
+  | "open"
+  | "attention"
+  | "handled"
+  | "all";
+
+
 function getParam(
   params: SearchParams,
   key: string
@@ -48,9 +55,24 @@ function cleanSearch(
 }
 
 
+function getInboxView(
+  value: string
+): InboxView {
+  if (
+    value === "attention" ||
+    value === "handled" ||
+    value === "all"
+  ) {
+    return value;
+  }
+
+  return "open";
+}
+
+
 function previewText(
   text: string | null,
-  maxLength = 220
+  maxLength = 260
 ) {
   if (!text) {
     return "No reply text available.";
@@ -178,6 +200,25 @@ function actionLabel(
 }
 
 
+function viewTitle(
+  view: InboxView
+) {
+  switch (view) {
+    case "attention":
+      return "Needs Attention";
+
+    case "handled":
+      return "Handled Replies";
+
+    case "all":
+      return "All Replies";
+
+    default:
+      return "Open Replies";
+  }
+}
+
+
 export default async function RepliesPage({
   searchParams,
 }: Props) {
@@ -201,10 +242,12 @@ export default async function RepliesPage({
     );
 
 
-  const handling =
-    getParam(
-      params,
-      "handling"
+  const view =
+    getInboxView(
+      getParam(
+        params,
+        "view"
+      )
     );
 
 
@@ -307,7 +350,18 @@ export default async function RepliesPage({
 
 
   if (
-    handling === "open"
+    view === "open"
+  ) {
+    query =
+      query.eq(
+        "handled",
+        false
+      );
+  }
+
+
+  if (
+    view === "attention"
   ) {
     query =
       query
@@ -323,7 +377,7 @@ export default async function RepliesPage({
 
 
   if (
-    handling === "handled"
+    view === "handled"
   ) {
     query =
       query.eq(
@@ -339,6 +393,12 @@ export default async function RepliesPage({
     count,
   } =
     await query
+      .order(
+        "requires_attention",
+        {
+          ascending: false,
+        }
+      )
       .order(
         "received_at",
         {
@@ -361,12 +421,14 @@ export default async function RepliesPage({
         (
           replies ??
           []
-        ).map(
-          (
-            reply
-          ) =>
-            reply.lead_id
         )
+          .map(
+            (
+              reply
+            ) =>
+              reply.lead_id
+          )
+          .filter(Boolean)
       ),
     ];
 
@@ -383,6 +445,9 @@ export default async function RepliesPage({
         name:
           string | null;
 
+        email:
+          string | null;
+
         phone:
           string | null;
 
@@ -391,6 +456,12 @@ export default async function RepliesPage({
 
         status:
           string | null;
+
+        has_replied:
+          boolean | null;
+
+        reply_requires_attention:
+          boolean | null;
       }
     >();
 
@@ -406,9 +477,12 @@ export default async function RepliesPage({
         id,
         company_name,
         name,
+        email,
         phone,
         carrier_dot_number,
-        status
+        status,
+        has_replied,
+        reply_requires_attention
       `)
       .in(
         "id",
@@ -429,81 +503,144 @@ export default async function RepliesPage({
 
 
   // ==========================================================
-  // DASHBOARD COUNTERS
+  // INBOX COUNTERS
   // ==========================================================
 
-  const {
-    count: totalReplies,
-  } = await supabase
-    .from(
-      "email_replies"
-    )
-    .select(
-      "id",
-      {
-        count: "exact",
-        head: true,
-      }
-    );
+  const [
+    totalResult,
+    openResult,
+    attentionResult,
+    handledResult,
+    interestedResult,
+    repliedLeadsResult,
+  ] =
+    await Promise.all([
+      supabase
+        .from(
+          "email_replies"
+        )
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        ),
+
+      supabase
+        .from(
+          "email_replies"
+        )
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "handled",
+          false
+        ),
+
+      supabase
+        .from(
+          "email_replies"
+        )
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "handled",
+          false
+        )
+        .eq(
+          "requires_attention",
+          true
+        ),
+
+      supabase
+        .from(
+          "email_replies"
+        )
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "handled",
+          true
+        ),
+
+      supabase
+        .from(
+          "email_replies"
+        )
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "classification",
+          "interested"
+        ),
+
+      supabase
+        .from(
+          "leads"
+        )
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "has_replied",
+          true
+        ),
+    ]);
 
 
-  const {
-    count: repliedLeads,
-  } = await supabase
-    .from("leads")
-    .select(
-      "id",
-      {
-        count: "exact",
-        head: true,
-      }
-    )
-    .eq(
-      "has_replied",
-      true
-    );
+  const totalReplies =
+    totalResult.count ??
+    0;
 
 
-  const {
-    count: openTasks,
-  } = await supabase
-    .from(
-      "email_replies"
-    )
-    .select(
-      "id",
-      {
-        count: "exact",
-        head: true,
-      }
-    )
-    .eq(
-      "requires_attention",
-      true
-    )
-    .eq(
-      "handled",
-      false
-    );
+  const openReplies =
+    openResult.count ??
+    0;
 
 
-  const {
-    count: handledCount,
-  } = await supabase
-    .from(
-      "email_replies"
-    )
-    .select(
-      "id",
-      {
-        count: "exact",
-        head: true,
-      }
-    )
-    .eq(
-      "handled",
-      true
-    );
+  const attentionReplies =
+    attentionResult.count ??
+    0;
+
+
+  const handledReplies =
+    handledResult.count ??
+    0;
+
+
+  const interestedReplies =
+    interestedResult.count ??
+    0;
+
+
+  const repliedLeads =
+    repliedLeadsResult.count ??
+    0;
 
 
   const total =
@@ -523,11 +660,11 @@ export default async function RepliesPage({
   function pageUrl(
     targetPage: number
   ) {
-    const params =
+    const urlParams =
       new URLSearchParams();
 
 
-    params.set(
+    urlParams.set(
       "page",
       String(
         targetPage
@@ -535,8 +672,14 @@ export default async function RepliesPage({
     );
 
 
+    urlParams.set(
+      "view",
+      view
+    );
+
+
     if (search) {
-      params.set(
+      urlParams.set(
         "q",
         search
       );
@@ -546,74 +689,228 @@ export default async function RepliesPage({
     if (
       classification
     ) {
-      params.set(
+      urlParams.set(
         "classification",
         classification
       );
     }
 
 
-    if (handling) {
-      params.set(
-        "handling",
-        handling
+    return `/admin/replies?${urlParams.toString()}`;
+  }
+
+
+  function viewUrl(
+    targetView: InboxView
+  ) {
+    const urlParams =
+      new URLSearchParams();
+
+
+    urlParams.set(
+      "view",
+      targetView
+    );
+
+
+    if (search) {
+      urlParams.set(
+        "q",
+        search
       );
     }
 
 
-    return `/admin/replies?${params.toString()}`;
+    if (
+      classification
+    ) {
+      urlParams.set(
+        "classification",
+        classification
+      );
+    }
+
+
+    return `/admin/replies?${urlParams.toString()}`;
   }
 
 
-  return (
-    <div className="space-y-8">
+  const tabs: Array<{
+    key: InboxView;
+    label: string;
+    count: number;
+  }> = [
+    {
+      key: "open",
+      label: "Open",
+      count: openReplies,
+    },
+    {
+      key: "attention",
+      label: "Needs Attention",
+      count: attentionReplies,
+    },
+    {
+      key: "handled",
+      label: "Handled",
+      count: handledReplies,
+    },
+    {
+      key: "all",
+      label: "All Replies",
+      count: totalReplies,
+    },
+  ];
 
-      {/* HEADER */}
+
+  return (
+    <div className="space-y-7">
+
+      {/* ======================================================
+          HEADER
+      ====================================================== */}
 
       <div className="flex flex-wrap items-end justify-between gap-5">
 
         <div>
 
           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-400">
-            Sales Inbox
+            Phase 026D · First Client Operations
           </div>
 
           <h1 className="text-4xl font-bold">
-            Replies
+            First Client Inbox
           </h1>
 
-          <p className="mt-2 text-zinc-400">
-            Review carrier replies and move each response through the sales workflow.
+          <p className="mt-2 max-w-3xl text-zinc-400">
+            Every carrier response enters this sales inbox.
+            Review the reply, decide the next action and keep
+            replied leads safely outside automated outreach.
           </p>
 
         </div>
 
 
-        <Link
-          href="/admin/leads"
-          className="rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-3 text-sm font-semibold hover:bg-zinc-800"
-        >
-          View All Leads →
-        </Link>
+        <div className="flex flex-wrap gap-3">
+
+          <Link
+            href="/admin/tasks"
+            className="rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-3 text-sm font-semibold hover:bg-zinc-800"
+          >
+            Follow-up Tasks →
+          </Link>
+
+          <Link
+            href="/admin/leads"
+            className="rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-3 text-sm font-semibold hover:bg-zinc-800"
+          >
+            All Leads →
+          </Link>
+
+        </div>
 
       </div>
 
 
-      {/* STATS */}
+      {/* ======================================================
+          PROTECTION BANNER
+      ====================================================== */}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="rounded-2xl border border-emerald-900/70 bg-emerald-950/20 px-5 py-4">
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
 
-          <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Total Replies
+          <div>
+
+            <div className="text-sm font-semibold text-emerald-300">
+              Reply protection workflow active
+            </div>
+
+            <div className="mt-1 text-sm text-zinc-400">
+              Inbox actions never restart a stopped sequence.
+              Follow-up work is created only after an explicit operator action.
+            </div>
+
           </div>
 
-          <div className="mt-2 text-3xl font-bold">
-            {(
-              totalReplies ??
-              0
-            ).toLocaleString()}
+          <div className="rounded-full border border-emerald-800 bg-emerald-950 px-4 py-2 text-xs font-bold uppercase tracking-wider text-emerald-300">
+            Protected
+          </div>
+
+        </div>
+
+      </div>
+
+
+      {/* ======================================================
+          KPI CARDS
+      ====================================================== */}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+
+        <div className="rounded-2xl border border-cyan-900/70 bg-cyan-950/20 p-5">
+
+          <div className="text-xs uppercase tracking-wide text-cyan-500">
+            Open
+          </div>
+
+          <div className="mt-2 text-3xl font-bold text-cyan-300">
+            {openReplies.toLocaleString()}
+          </div>
+
+          <div className="mt-2 text-xs text-zinc-500">
+            Awaiting operator handling
+          </div>
+
+        </div>
+
+
+        <div className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-5">
+
+          <div className="text-xs uppercase tracking-wide text-amber-500">
+            Needs Attention
+          </div>
+
+          <div className="mt-2 text-3xl font-bold text-amber-300">
+            {attentionReplies.toLocaleString()}
+          </div>
+
+          <div className="mt-2 text-xs text-zinc-500">
+            Highest priority replies
+          </div>
+
+        </div>
+
+
+        <div className="rounded-2xl border border-emerald-900/70 bg-emerald-950/20 p-5">
+
+          <div className="text-xs uppercase tracking-wide text-emerald-500">
+            Interested
+          </div>
+
+          <div className="mt-2 text-3xl font-bold text-emerald-300">
+            {interestedReplies.toLocaleString()}
+          </div>
+
+          <div className="mt-2 text-xs text-zinc-500">
+            Potential clients
+          </div>
+
+        </div>
+
+
+        <div className="rounded-2xl border border-blue-900/70 bg-blue-950/20 p-5">
+
+          <div className="text-xs uppercase tracking-wide text-blue-500">
+            Handled
+          </div>
+
+          <div className="mt-2 text-3xl font-bold text-blue-300">
+            {handledReplies.toLocaleString()}
+          </div>
+
+          <div className="mt-2 text-xs text-zinc-500">
+            Completed inbox work
           </div>
 
         </div>
@@ -625,43 +922,12 @@ export default async function RepliesPage({
             Replied Leads
           </div>
 
-          <div className="mt-2 text-3xl font-bold text-emerald-300">
-            {(
-              repliedLeads ??
-              0
-            ).toLocaleString()}
+          <div className="mt-2 text-3xl font-bold">
+            {repliedLeads.toLocaleString()}
           </div>
 
-        </div>
-
-
-        <div className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-5">
-
-          <div className="text-xs uppercase tracking-wide text-amber-500">
-            Open Tasks
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-amber-300">
-            {(
-              openTasks ??
-              0
-            ).toLocaleString()}
-          </div>
-
-        </div>
-
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5">
-
-          <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Handled
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-blue-300">
-            {(
-              handledCount ??
-              0
-            ).toLocaleString()}
+          <div className="mt-2 text-xs text-zinc-500">
+            Unique leads with replies
           </div>
 
         </div>
@@ -669,14 +935,87 @@ export default async function RepliesPage({
       </div>
 
 
-      {/* FILTERS */}
+      {/* ======================================================
+          INBOX TABS
+      ====================================================== */}
+
+      <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/50">
+
+        <div className="flex overflow-x-auto">
+
+          {tabs.map(
+            (
+              tab
+            ) => {
+
+              const active =
+                view === tab.key;
+
+
+              return (
+
+                <Link
+                  key={
+                    tab.key
+                  }
+                  href={
+                    viewUrl(
+                      tab.key
+                    )
+                  }
+                  className={[
+                    "flex min-w-max items-center gap-2 border-b-2 px-6 py-4 text-sm font-semibold transition",
+                    active
+                      ? "border-cyan-400 bg-cyan-950/20 text-cyan-300"
+                      : "border-transparent text-zinc-400 hover:bg-zinc-900 hover:text-white",
+                  ].join(" ")}
+                >
+
+                  <span>
+                    {tab.label}
+                  </span>
+
+                  <span
+                    className={[
+                      "rounded-full px-2 py-0.5 text-xs",
+                      active
+                        ? "bg-cyan-900 text-cyan-200"
+                        : "bg-zinc-800 text-zinc-400",
+                    ].join(" ")}
+                  >
+                    {tab.count}
+                  </span>
+
+                </Link>
+
+              );
+            }
+          )}
+
+        </div>
+
+      </div>
+
+
+      {/* ======================================================
+          FILTERS
+      ====================================================== */}
 
       <form
         method="GET"
         className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
       >
 
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_210px_180px_auto_auto]">
+        <input
+          type="hidden"
+          name="view"
+          value={
+            view
+          }
+        />
+
+
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_240px_auto_auto]">
 
           <input
             type="text"
@@ -684,8 +1023,8 @@ export default async function RepliesPage({
             defaultValue={
               search
             }
-            placeholder="Search sender, subject or reply..."
-            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 outline-none"
+            placeholder="Search sender, company, subject or reply..."
+            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 outline-none focus:border-cyan-700"
           />
 
 
@@ -733,41 +1072,17 @@ export default async function RepliesPage({
           </select>
 
 
-          <select
-            name="handling"
-            defaultValue={
-              handling ||
-              "all"
-            }
-            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3"
-          >
-
-            <option value="all">
-              All replies
-            </option>
-
-            <option value="open">
-              Open tasks
-            </option>
-
-            <option value="handled">
-              Handled
-            </option>
-
-          </select>
-
-
           <button
             type="submit"
-            className="rounded-xl bg-white px-6 py-3 font-semibold text-black"
+            className="rounded-xl bg-white px-6 py-3 font-semibold text-black hover:bg-zinc-200"
           >
-            Filter
+            Search
           </button>
 
 
           <Link
-            href="/admin/replies"
-            className="rounded-xl border border-zinc-700 px-6 py-3 text-center"
+            href={`/admin/replies?view=${view}`}
+            className="rounded-xl border border-zinc-700 px-6 py-3 text-center hover:bg-zinc-800"
           >
             Clear
           </Link>
@@ -777,7 +1092,44 @@ export default async function RepliesPage({
       </form>
 
 
-      {/* ERROR */}
+      {/* ======================================================
+          SECTION TITLE
+      ====================================================== */}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+
+        <div>
+
+          <h2 className="text-2xl font-bold">
+            {viewTitle(
+              view
+            )}
+          </h2>
+
+          <div className="mt-1 text-sm text-zinc-500">
+            {total.toLocaleString()} matching{" "}
+            {total === 1
+              ? "reply"
+              : "replies"}
+          </div>
+
+        </div>
+
+        {attentionReplies > 0 && (
+          <Link
+            href="/admin/replies?view=attention"
+            className="rounded-xl border border-amber-800 bg-amber-950/30 px-4 py-2 text-sm font-semibold text-amber-300"
+          >
+            ⚠ {attentionReplies} need attention
+          </Link>
+        )}
+
+      </div>
+
+
+      {/* ======================================================
+          ERROR
+      ====================================================== */}
 
       {error && (
 
@@ -788,7 +1140,9 @@ export default async function RepliesPage({
       )}
 
 
-      {/* REPLY CARDS */}
+      {/* ======================================================
+          REPLY CARDS
+      ====================================================== */}
 
       <div className="space-y-5">
 
@@ -811,31 +1165,47 @@ export default async function RepliesPage({
 
             return (
 
-              <div
+              <article
                 key={
                   reply.id
                 }
-                className="rounded-2xl border border-zinc-800 bg-zinc-900/55 p-6"
+                className={[
+                  "rounded-2xl border bg-zinc-900/55 p-6",
+                  !reply.handled &&
+                  reply.requires_attention
+                    ? "border-amber-800/80"
+                    : "border-zinc-800",
+                ].join(" ")}
               >
 
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
 
                   <div className="min-w-0 flex-1">
 
+                    {/* SENDER */}
+
                     <div className="flex flex-wrap items-center gap-3">
 
-                      <div className="flex h-11 w-11 items-center justify-center rounded-full border border-emerald-800 bg-emerald-950 text-emerald-300">
+                      <div
+                        className={[
+                          "flex h-11 w-11 items-center justify-center rounded-full border font-bold",
+                          !reply.handled &&
+                          reply.requires_attention
+                            ? "border-amber-700 bg-amber-950 text-amber-300"
+                            : "border-emerald-800 bg-emerald-950 text-emerald-300",
+                        ].join(" ")}
+                      >
                         ↩
                       </div>
 
 
-                      <div>
+                      <div className="min-w-0">
 
-                        <div className="text-lg font-semibold">
+                        <div className="truncate text-lg font-semibold">
                           {name}
                         </div>
 
-                        <div className="text-sm text-zinc-500">
+                        <div className="truncate text-sm text-zinc-500">
                           {reply.from_email}
                         </div>
 
@@ -865,22 +1235,30 @@ export default async function RepliesPage({
                       ) : reply.requires_attention ? (
 
                         <span className="rounded-full border border-amber-800 bg-amber-950 px-3 py-1 text-xs font-semibold text-amber-300">
-                          Needs Attention
+                          ⚠ Needs Attention
                         </span>
 
-                      ) : null}
+                      ) : (
+
+                        <span className="rounded-full border border-cyan-800 bg-cyan-950 px-3 py-1 text-xs font-semibold text-cyan-300">
+                          Open
+                        </span>
+
+                      )}
 
                     </div>
 
 
-                    <div className="mt-5">
+                    {/* MESSAGE */}
 
-                      <div className="font-medium">
+                    <div className="mt-5 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+
+                      <div className="font-semibold text-zinc-100">
                         {reply.subject ||
                           "(No subject)"}
                       </div>
 
-                      <p className="mt-2 leading-6 text-zinc-400">
+                      <p className="mt-3 whitespace-pre-wrap leading-6 text-zinc-300">
                         {previewText(
                           reply.text_body
                         )}
@@ -889,7 +1267,9 @@ export default async function RepliesPage({
                     </div>
 
 
-                    <div className="mt-5 flex flex-wrap gap-4 text-xs text-zinc-500">
+                    {/* METADATA */}
+
+                    <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-xs text-zinc-500">
 
                       {lead
                         ?.carrier_dot_number && (
@@ -907,8 +1287,21 @@ export default async function RepliesPage({
                       {lead?.phone && (
 
                         <span>
+                          Phone{" "}
                           {
                             lead.phone
+                          }
+                        </span>
+
+                      )}
+
+
+                      {lead?.status && (
+
+                        <span>
+                          Lead status{" "}
+                          {
+                            lead.status
                           }
                         </span>
 
@@ -919,7 +1312,7 @@ export default async function RepliesPage({
                         null && (
 
                         <span>
-                          Confidence{" "}
+                          Classification confidence{" "}
                           {Math.round(
                             Number(
                               reply.classification_confidence
@@ -927,6 +1320,24 @@ export default async function RepliesPage({
                               100
                           )}
                           %
+                        </span>
+
+                      )}
+
+
+                      {reply.attachment_count >
+                        0 && (
+
+                        <span>
+                          📎{" "}
+                          {
+                            reply.attachment_count
+                          }{" "}
+                          attachment
+                          {reply.attachment_count ===
+                          1
+                            ? ""
+                            : "s"}
                         </span>
 
                       )}
@@ -944,6 +1355,18 @@ export default async function RepliesPage({
                       )}
 
                     </div>
+
+
+                    {reply.classification_reason && (
+
+                      <div className="mt-4 text-xs text-zinc-600">
+                        Classification reason:{" "}
+                        {
+                          reply.classification_reason
+                        }
+                      </div>
+
+                    )}
 
 
                     {reply.handled_note && (
@@ -965,9 +1388,15 @@ export default async function RepliesPage({
                   </div>
 
 
-                  <div className="shrink-0 xl:text-right">
+                  {/* RIGHT SIDE */}
 
-                    <div className="text-sm text-zinc-400">
+                  <div className="shrink-0 xl:w-52 xl:text-right">
+
+                    <div className="text-xs uppercase tracking-wide text-zinc-600">
+                      Received
+                    </div>
+
+                    <div className="mt-1 text-sm text-zinc-300">
                       {formatDate(
                         reply.received_at
                       )}
@@ -975,9 +1404,9 @@ export default async function RepliesPage({
 
                     <Link
                       href={`/admin/leads/${reply.lead_id}`}
-                      className="mt-2 inline-block text-xs font-semibold text-blue-400 hover:text-blue-300"
+                      className="mt-4 inline-block rounded-lg border border-zinc-700 px-3 py-2 text-xs font-semibold text-blue-400 hover:bg-zinc-800 hover:text-blue-300"
                     >
-                      Open conversation →
+                      Open Lead →
                     </Link>
 
                   </div>
@@ -985,7 +1414,9 @@ export default async function RepliesPage({
                 </div>
 
 
-                {/* SALES ACTIONS */}
+                {/* ==================================================
+                    SALES ACTIONS
+                ================================================== */}
 
                 {!reply.handled && (
 
@@ -1013,7 +1444,20 @@ export default async function RepliesPage({
                     />
 
 
-                    <div className="flex flex-col gap-3">
+                    <div className="mb-4">
+
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-400">
+                        Operator Action
+                      </div>
+
+                      <div className="mt-1 text-sm text-zinc-500">
+                        Choose what happened with this carrier response.
+                      </div>
+
+                    </div>
+
+
+                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
 
                       <input
                         type="text"
@@ -1022,8 +1466,6 @@ export default async function RepliesPage({
                         className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm outline-none placeholder:text-zinc-600"
                       />
 
-
-                      {/* FOLLOW-UP SCHEDULING */}
 
                       <select
                         name="followUpDelay"
@@ -1051,87 +1493,93 @@ export default async function RepliesPage({
                         </option>
                       </select>
 
-
-                      <div className="flex flex-wrap gap-2">
-
-                        <button
-                          type="submit"
-                          name="action"
-                          value="handled"
-                          className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-semibold hover:bg-zinc-700"
-                        >
-                          ✓ Mark Handled
-                        </button>
+                    </div>
 
 
-                        <button
-                          type="submit"
-                          name="action"
-                          value="interested"
-                          className="rounded-lg border border-emerald-800 bg-emerald-950 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-900"
-                        >
-                          Interested
-                        </button>
+                    <div className="mt-4 flex flex-wrap gap-2">
+
+                      <button
+                        type="submit"
+                        name="action"
+                        value="interested"
+                        className="rounded-lg border border-emerald-700 bg-emerald-950 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-900"
+                      >
+                        ★ Interested
+                      </button>
 
 
-                        <button
-                          type="submit"
-                          name="action"
-                          value="call_lead"
-                          className="rounded-lg border border-purple-800 bg-purple-950 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-900"
-                        >
-                          Call Lead
-                        </button>
+                      <button
+                        type="submit"
+                        name="action"
+                        value="call_lead"
+                        className="rounded-lg border border-purple-800 bg-purple-950 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-900"
+                      >
+                        ☎ Call Lead
+                      </button>
 
 
-                        <button
-                          type="submit"
-                          name="action"
-                          value="sent_rates"
-                          className="rounded-lg border border-blue-800 bg-blue-950 px-4 py-2 text-sm font-semibold text-blue-300 hover:bg-blue-900"
-                        >
-                          Sent Rates
-                        </button>
+                      <button
+                        type="submit"
+                        name="action"
+                        value="sent_rates"
+                        className="rounded-lg border border-blue-800 bg-blue-950 px-4 py-2 text-sm font-semibold text-blue-300 hover:bg-blue-900"
+                      >
+                        Sent Rates
+                      </button>
 
 
-                        <button
-                          type="submit"
-                          name="action"
-                          value="not_interested"
-                          className="rounded-lg border border-red-900 bg-red-950 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-900"
-                        >
-                          Not Interested
-                        </button>
+                      <button
+                        type="submit"
+                        name="action"
+                        value="handled"
+                        className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-semibold hover:bg-zinc-700"
+                      >
+                        ✓ Mark Handled
+                      </button>
 
 
-                        <button
-                          type="submit"
-                          name="action"
-                          value="wrong_contact"
-                          className="rounded-lg border border-amber-800 bg-amber-950 px-4 py-2 text-sm font-semibold text-amber-300 hover:bg-amber-900"
-                        >
-                          Wrong Contact
-                        </button>
+                      <button
+                        type="submit"
+                        name="action"
+                        value="not_interested"
+                        className="rounded-lg border border-red-900 bg-red-950 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-900"
+                      >
+                        Not Interested
+                      </button>
 
 
-                        <button
-                          type="submit"
-                          name="action"
-                          value="unsubscribe"
-                          className="rounded-lg border border-zinc-600 bg-black px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-zinc-800"
-                        >
-                          Unsubscribe
-                        </button>
+                      <button
+                        type="submit"
+                        name="action"
+                        value="wrong_contact"
+                        className="rounded-lg border border-amber-800 bg-amber-950 px-4 py-2 text-sm font-semibold text-amber-300 hover:bg-amber-900"
+                      >
+                        Wrong Contact
+                      </button>
 
-                      </div>
 
+                      <button
+                        type="submit"
+                        name="action"
+                        value="unsubscribe"
+                        className="rounded-lg border border-zinc-600 bg-black px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-zinc-800"
+                      >
+                        Unsubscribe
+                      </button>
+
+                    </div>
+
+
+                    <div className="mt-4 text-xs text-zinc-600">
+                      Interested, Call Lead and Sent Rates create a follow-up task.
+                      Negative/unsubscribe actions permanently keep the lead out of automated outreach.
                     </div>
 
                   </form>
 
                 )}
 
-              </div>
+              </article>
 
             );
           }
@@ -1144,15 +1592,36 @@ export default async function RepliesPage({
             0
           ) === 0 && (
 
-          <div className="rounded-2xl border border-dashed border-zinc-800 p-16 text-center">
+          <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-16 text-center">
 
             <div className="text-4xl">
-              📭
+              {view === "open"
+                ? "✅"
+                : "📭"}
             </div>
 
             <div className="mt-4 text-xl font-semibold">
-              No matching replies
+              {view === "open"
+                ? "Inbox clear"
+                : "No matching replies"}
             </div>
+
+            <p className="mx-auto mt-2 max-w-xl text-sm text-zinc-500">
+              {view === "open"
+                ? "There are currently no replies waiting for operator handling."
+                : "Try another inbox tab or clear the current search filters."}
+            </p>
+
+            {view !== "all" && (
+
+              <Link
+                href="/admin/replies?view=all"
+                className="mt-5 inline-block rounded-lg border border-zinc-700 px-5 py-3 text-sm font-semibold hover:bg-zinc-800"
+              >
+                View reply history
+              </Link>
+
+            )}
 
           </div>
 
@@ -1161,7 +1630,9 @@ export default async function RepliesPage({
       </div>
 
 
-      {/* PAGINATION */}
+      {/* ======================================================
+          PAGINATION
+      ====================================================== */}
 
       {total > 0 && (
 
@@ -1175,7 +1646,7 @@ export default async function RepliesPage({
                   page - 1
                 )
               }
-              className="rounded-lg border border-zinc-700 px-5 py-3"
+              className="rounded-lg border border-zinc-700 px-5 py-3 hover:bg-zinc-800"
             >
               ← Previous
             </Link>
@@ -1200,7 +1671,7 @@ export default async function RepliesPage({
                   page + 1
                 )
               }
-              className="rounded-lg border border-zinc-700 px-5 py-3"
+              className="rounded-lg border border-zinc-700 px-5 py-3 hover:bg-zinc-800"
             >
               Next →
             </Link>
