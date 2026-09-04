@@ -1,837 +1,1084 @@
 import Link from "next/link";
-import { createClient } from "@supabase/supabase-js";
-import { promoteTo20Action } from "./actions";
+import type { ReactNode } from "react";
 
-export const dynamic = "force-dynamic";
+import {
+  createAdminSupabase,
+} from "@/lib/supabase/admin";
+
+import AutoRefresh from "./AutoRefresh";
+
+
+export const dynamic =
+  "force-dynamic";
+
+
+// ============================================================
+// TYPES
+// ============================================================
 
 type RampStatus = {
-  ramp_stage: number | null;
-  ramp_target: number | null;
-  pilot_limit: number | null;
-  daily_send_cap: number | null;
-  max_batch_size: number | null;
-  sending_enabled: boolean | null;
-  ready_for_20: boolean | null;
-  readiness_reason: string | null;
+  ramp_stage?: number | null;
+  ramp_target?: number | null;
+
+  pilot_limit?: number | null;
+  daily_send_cap?: number | null;
+  max_batch_size?: number | null;
+
+  sending_enabled?: boolean | null;
+
+  ready_for_20?: boolean | null;
+  readiness_reason?: string | null;
 };
 
-type RampAudit = {
-  id?: string | number;
-  action?: string | null;
-  from_target?: number | null;
-  to_target?: number | null;
-  success?: boolean | null;
-  reason?: string | null;
+
+type PreparedStatus = {
+  batch_id?: string | null;
+
+  status?: string | null;
+
+  ramp_target?: number | null;
+  prepared_count?: number | null;
+
+  operator_note?: string | null;
+
   created_at?: string | null;
-  note?: string | null;
+  cancelled_at?: string | null;
 };
 
-function getAdminSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !serviceRoleKey) {
-    throw new Error("Supabase admin environment variables are missing.");
-  }
+type PilotBatch = {
+  id?: string | null;
 
-  return createClient(url, serviceRoleKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
+  status?: string | null;
+
+  requested_count?: number | null;
+  prepared_count?: number | null;
+
+  armed_at?: string | null;
+  cancelled_at?: string | null;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+
+type ReplyIntegrity = {
+  replied_leads?: number | null;
+
+  safely_stopped_replied_leads?:
+    number | null;
+
+  replied_leads_still_running?:
+    number | null;
+
+  stored_replies?: number | null;
+
+  auto_stop_events?: number | null;
+};
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function numberValue(
+  value: unknown
+) {
+  const parsed =
+    Number(value);
+
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : 0;
 }
 
-function reasonLabel(reason?: string | null) {
-  switch (reason) {
-    case "current_pilot_still_running":
-      return "Current 5-carrier pilot is still running";
-    case "pilot_not_found":
-      return "No completed pilot is available";
-    case "safety_auto_paused":
-      return "Automatic safety protection is paused";
-    case "bounce_rate_exceeded":
-      return "Bounce rate is above the permitted threshold";
-    case "failure_rate_exceeded":
-      return "Failure rate is above the permitted threshold";
-    case "complaint_rate_exceeded":
-      return "Complaint threshold exceeded";
-    case "ready_for_ramp":
-    case "ready":
-      return "All ramp requirements passed";
-    case null:
-    case undefined:
-      return "No blocking condition";
-    default:
-      return reason.replaceAll("_", " ");
-  }
-}
 
-function formatDate(value?: string | null) {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "—";
-
-  return date.toLocaleString();
-}
-
-export default async function RampControlPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const params = await searchParams;
-  const errorParam =
-    typeof params.error === "string" ? params.error : null;
-
-  const successParam =
-    typeof params.success === "string" ? params.success : null;
-
-  const supabase = getAdminSupabase();
-
-  const [
-    rampResponse,
-    safetyResponse,
-    enrollmentsResponse,
-    pilotResponse,
-    auditResponse,
-  ] = await Promise.all([
-    supabase
-      .from("email_ramp_status")
-      .select("*")
-      .maybeSingle(),
-
-    supabase
-      .from("email_safety_status")
-      .select(
-        `
-        auto_paused,
-        pause_reason,
-        sends_in_window,
-        bounces_in_window,
-        failures_in_window,
-        complaints_in_window
-        `
-      )
-      .maybeSingle(),
-
-    supabase
-      .from("email_sequence_enrollments")
-      .select("id", {
-        count: "exact",
-        head: true,
-      })
-      .eq("status", "active"),
-
-    supabase
-      .from("email_pilot_batches")
-      .select(
-        `
-        id,
-        status,
-        requested_count,
-        prepared_count,
-        minimum_score,
-        created_at,
-        armed_at
-        `
-      )
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-
-    supabase
-      .from("email_ramp_audit")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(10),
-  ]);
-
-  if (rampResponse.error) {
-    throw new Error(
-      `Could not load ramp status: ${rampResponse.error.message}`
-    );
+function formatDate(
+  value:
+    string | null | undefined
+) {
+  if (!value) {
+    return "—";
   }
 
-  const ramp = rampResponse.data as RampStatus | null;
+  const date =
+    new Date(value);
 
-  const safety = safetyResponse.data as
-    | {
-        auto_paused?: boolean;
-        pause_reason?: string | null;
-        sends_in_window?: number;
-        bounces_in_window?: number;
-        failures_in_window?: number;
-        complaints_in_window?: number;
-      }
-    | null;
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return "—";
+  }
 
-  const pilot = pilotResponse.data as
-    | {
-        id?: string;
-        status?: string;
-        requested_count?: number;
-        prepared_count?: number;
-        minimum_score?: number;
-        created_at?: string;
-        armed_at?: string;
-      }
-    | null;
+  return date.toLocaleString(
+    "en-US",
+    {
+      dateStyle:
+        "medium",
 
-  const audits = (auditResponse.data ?? []) as RampAudit[];
-
-  const activeEnrollments = enrollmentsResponse.count ?? 0;
-
-  const stage = Number(ramp?.ramp_stage ?? 1);
-  const target = Number(ramp?.ramp_target ?? 5);
-  const ready = Boolean(ramp?.ready_for_20);
-  const masterSending = Boolean(ramp?.sending_enabled);
-  const safetyPaused = Boolean(safety?.auto_paused);
-
-  const currentPilotRunning =
-    pilot?.status === "armed" ||
-    pilot?.status === "prepared" ||
-    activeEnrollments > 0;
-
-  const promotionLocked =
-    !ready ||
-    safetyPaused ||
-    currentPilotRunning ||
-    target >= 20;
-
-  const progressPercent =
-    target >= 20 ? 100 : target <= 5 ? 25 : 50;
-
-  return (
-    <main
-      style={{
-        padding: "30px",
-        maxWidth: "1500px",
-        margin: "0 auto",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: "20px",
-          marginBottom: "28px",
-        }}
-      >
-        <div>
-          <div
-            style={{
-              color: "#22d3ee",
-              fontSize: "12px",
-              fontWeight: 800,
-              letterSpacing: "0.18em",
-              marginBottom: "8px",
-            }}
-          >
-            PHASE 024 • CONTROLLED PRODUCTION RAMP
-          </div>
-
-          <h1
-            style={{
-              fontSize: "34px",
-              margin: 0,
-              marginBottom: "8px",
-            }}
-          >
-            Production Ramp Control
-          </h1>
-
-          <p
-            style={{
-              margin: 0,
-              color: "#94a3b8",
-              maxWidth: "780px",
-              lineHeight: 1.6,
-            }}
-          >
-            Promote SlateLane outbound capacity only after the
-            previous validation stage has completed safely.
-          </p>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            gap: "10px",
-            flexWrap: "wrap",
-          }}
-        >
-          <Link
-            href="/admin/pilot"
-            style={{
-              padding: "11px 16px",
-              border: "1px solid #334155",
-              borderRadius: "10px",
-              color: "white",
-              textDecoration: "none",
-              fontWeight: 700,
-            }}
-          >
-            ← Pilot Launch
-          </Link>
-
-          <Link
-            href="/admin/monitoring/safety"
-            style={{
-              padding: "11px 16px",
-              border: "1px solid #334155",
-              borderRadius: "10px",
-              color: "white",
-              textDecoration: "none",
-              fontWeight: 700,
-            }}
-          >
-            Safety Center →
-          </Link>
-        </div>
-      </div>
-
-      {successParam === "promoted_to_20" && (
-        <div
-          style={{
-            border: "1px solid #059669",
-            background: "rgba(5,150,105,.10)",
-            borderRadius: "14px",
-            padding: "16px 18px",
-            marginBottom: "22px",
-            color: "#6ee7b7",
-          }}
-        >
-          <strong>Ramp promotion successful.</strong>
-          <div style={{ marginTop: "4px", color: "#a7f3d0" }}>
-            Capacity is now 20 carriers. Master Sending remains OFF.
-          </div>
-        </div>
-      )}
-
-      {errorParam && (
-        <div
-          style={{
-            border: "1px solid #dc2626",
-            background: "rgba(220,38,38,.10)",
-            borderRadius: "14px",
-            padding: "16px 18px",
-            marginBottom: "22px",
-            color: "#fca5a5",
-          }}
-        >
-          <strong>Ramp action blocked.</strong>
-          <div style={{ marginTop: "4px" }}>
-            {reasonLabel(errorParam)}
-          </div>
-        </div>
-      )}
-
-      <section
-        style={{
-          border: "1px solid #29313a",
-          borderRadius: "18px",
-          padding: "24px",
-          background: "#0d1114",
-          marginBottom: "22px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: "16px",
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <div
-              style={{
-                color: "#94a3b8",
-                fontSize: "12px",
-                marginBottom: "6px",
-              }}
-            >
-              CURRENT PRODUCTION STAGE
-            </div>
-
-            <div
-              style={{
-                fontSize: "28px",
-                fontWeight: 900,
-              }}
-            >
-              Stage {stage} — {target} Carrier Capacity
-            </div>
-          </div>
-
-          <div
-            style={{
-              border:
-                masterSending
-                  ? "1px solid #dc2626"
-                  : "1px solid #059669",
-              background:
-                masterSending
-                  ? "rgba(220,38,38,.10)"
-                  : "rgba(5,150,105,.10)",
-              padding: "10px 14px",
-              borderRadius: "999px",
-              fontWeight: 800,
-              color:
-                masterSending ? "#f87171" : "#34d399",
-            }}
-          >
-            MASTER SENDING{" "}
-            {masterSending ? "ON" : "OFF — SAFE"}
-          </div>
-        </div>
-
-        <div
-          style={{
-            height: "12px",
-            background: "#171c20",
-            borderRadius: "999px",
-            marginTop: "26px",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${progressPercent}%`,
-              background:
-                "linear-gradient(90deg,#06b6d4,#10b981)",
-              borderRadius: "999px",
-            }}
-          />
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            color: "#64748b",
-            marginTop: "8px",
-            fontSize: "12px",
-          }}
-        >
-          <span>5</span>
-          <span>20</span>
-          <span>50</span>
-          <span>100+</span>
-        </div>
-      </section>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(auto-fit,minmax(190px,1fr))",
-          gap: "14px",
-          marginBottom: "22px",
-        }}
-      >
-        {[
-          ["Ramp Target", target],
-          ["Pilot Limit", ramp?.pilot_limit ?? 0],
-          ["Daily Send Cap", ramp?.daily_send_cap ?? 0],
-          ["Processor Batch", ramp?.max_batch_size ?? 0],
-          ["Active Enrollments", activeEnrollments],
-          [
-            "Safety",
-            safetyPaused ? "AUTO-PAUSED" : "CLEAR",
-          ],
-        ].map(([label, value]) => (
-          <div
-            key={String(label)}
-            style={{
-              border: "1px solid #29313a",
-              borderRadius: "15px",
-              padding: "18px",
-              background: "#0d1114",
-            }}
-          >
-            <div
-              style={{
-                color: "#64748b",
-                fontSize: "11px",
-                fontWeight: 700,
-                marginBottom: "8px",
-              }}
-            >
-              {label}
-            </div>
-
-            <div
-              style={{
-                fontSize: "23px",
-                fontWeight: 900,
-              }}
-            >
-              {String(value)}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <section
-        style={{
-          border: ready
-            ? "1px solid #059669"
-            : "1px solid #92400e",
-          background: ready
-            ? "rgba(5,150,105,.06)"
-            : "rgba(146,64,14,.07)",
-          borderRadius: "18px",
-          padding: "24px",
-          marginBottom: "22px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: "18px",
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: "12px",
-                letterSpacing: ".16em",
-                fontWeight: 800,
-                color: ready ? "#34d399" : "#fbbf24",
-              }}
-            >
-              5 → 20 READINESS
-            </div>
-
-            <h2
-              style={{
-                margin: "8px 0",
-                fontSize: "25px",
-              }}
-            >
-              {ready
-                ? "READY FOR CONTROLLED PROMOTION"
-                : "PROMOTION LOCKED"}
-            </h2>
-
-            <p
-              style={{
-                color: "#94a3b8",
-                margin: 0,
-              }}
-            >
-              {reasonLabel(ramp?.readiness_reason)}
-            </p>
-          </div>
-
-          <div
-            style={{
-              fontSize: "24px",
-              fontWeight: 900,
-              color: ready ? "#34d399" : "#f59e0b",
-            }}
-          >
-            {ready ? "PASS" : "WAIT"}
-          </div>
-        </div>
-      </section>
-
-      <section
-        style={{
-          border: "1px solid #29313a",
-          borderRadius: "18px",
-          background: "#0d1114",
-          padding: "24px",
-          marginBottom: "22px",
-        }}
-      >
-        <div
-          style={{
-            color: "#22d3ee",
-            fontWeight: 800,
-            fontSize: "12px",
-            letterSpacing: ".16em",
-            marginBottom: "8px",
-          }}
-        >
-          PROTECTED OPERATOR ACTION
-        </div>
-
-        <h2
-          style={{
-            fontSize: "25px",
-            marginTop: 0,
-          }}
-        >
-          Promote Capacity: 5 → 20
-        </h2>
-
-        <p
-          style={{
-            color: "#94a3b8",
-            maxWidth: "820px",
-            lineHeight: 1.6,
-          }}
-        >
-          This action changes carrier capacity only. It does not
-          enable Master Sending and does not automatically transmit
-          an email.
-        </p>
-
-        {target >= 20 ? (
-          <div
-            style={{
-              padding: "16px",
-              border: "1px solid #059669",
-              borderRadius: "12px",
-              color: "#6ee7b7",
-              marginTop: "18px",
-            }}
-          >
-            Stage 20 capacity has already been unlocked.
-          </div>
-        ) : (
-          <form
-            action={promoteTo20Action}
-            style={{
-              maxWidth: "760px",
-              marginTop: "20px",
-            }}
-          >
-            <label
-              style={{
-                display: "block",
-                fontWeight: 700,
-                marginBottom: "8px",
-              }}
-            >
-              Operator note
-            </label>
-
-            <textarea
-              name="note"
-              placeholder="Example: 5-carrier pilot completed with successful delivery and no safety incidents."
-              style={{
-                width: "100%",
-                minHeight: "90px",
-                padding: "13px",
-                background: "#050607",
-                color: "white",
-                border: "1px solid #374151",
-                borderRadius: "10px",
-                marginBottom: "18px",
-                resize: "vertical",
-              }}
-            />
-
-            <label
-              style={{
-                display: "block",
-                fontWeight: 700,
-                marginBottom: "8px",
-              }}
-            >
-              Type{" "}
-              <strong style={{ color: "#fbbf24" }}>
-                PROMOTE TO 20
-              </strong>{" "}
-              exactly
-            </label>
-
-            <input
-              name="confirmation"
-              autoComplete="off"
-              placeholder="PROMOTE TO 20"
-              style={{
-                width: "100%",
-                padding: "13px",
-                background: "#050607",
-                color: "white",
-                border: "1px solid #374151",
-                borderRadius: "10px",
-                marginBottom: "18px",
-              }}
-            />
-
-            {!ready && (
-              <div
-                style={{
-                  padding: "13px 15px",
-                  border: "1px solid #92400e",
-                  background: "rgba(146,64,14,.08)",
-                  color: "#fbbf24",
-                  borderRadius: "10px",
-                  marginBottom: "16px",
-                }}
-              >
-                Promotion is currently locked:{" "}
-                {reasonLabel(ramp?.readiness_reason)}.
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={promotionLocked}
-              style={{
-                padding: "13px 20px",
-                border: 0,
-                borderRadius: "10px",
-                fontWeight: 900,
-                cursor: promotionLocked
-                  ? "not-allowed"
-                  : "pointer",
-                background: promotionLocked
-                  ? "#252a2e"
-                  : "#059669",
-                color: promotionLocked
-                  ? "#64748b"
-                  : "white",
-              }}
-            >
-              {promotionLocked
-                ? "Promotion Locked"
-                : "Promote to 20 Carriers"}
-            </button>
-          </form>
-        )}
-      </section>
-
-      <section
-        style={{
-          border: "1px solid #29313a",
-          borderRadius: "18px",
-          overflow: "hidden",
-          background: "#0d1114",
-        }}
-      >
-        <div
-          style={{
-            padding: "20px 22px",
-            borderBottom: "1px solid #29313a",
-          }}
-        >
-          <h2 style={{ margin: 0 }}>Ramp Audit History</h2>
-
-          <p
-            style={{
-              color: "#64748b",
-              marginBottom: 0,
-            }}
-          >
-            Protected capacity-promotion attempts and decisions.
-          </p>
-        </div>
-
-        {audits.length === 0 ? (
-          <div
-            style={{
-              padding: "30px",
-              color: "#64748b",
-              textAlign: "center",
-            }}
-          >
-            No ramp events recorded yet.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-              }}
-            >
-              <thead>
-                <tr>
-                  {[
-                    "Time",
-                    "Action",
-                    "From",
-                    "To",
-                    "Result",
-                    "Reason",
-                  ].map((heading) => (
-                    <th
-                      key={heading}
-                      style={{
-                        textAlign: "left",
-                        padding: "13px 16px",
-                        color: "#64748b",
-                        fontSize: "11px",
-                        borderBottom:
-                          "1px solid #29313a",
-                      }}
-                    >
-                      {heading}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-
-              <tbody>
-                {audits.map((item, index) => (
-                  <tr
-                    key={String(item.id ?? index)}
-                  >
-                    <td style={cell}>
-                      {formatDate(item.created_at)}
-                    </td>
-
-                    <td style={cell}>
-                      {item.action ?? "—"}
-                    </td>
-
-                    <td style={cell}>
-                      {item.from_target ?? "—"}
-                    </td>
-
-                    <td style={cell}>
-                      {item.to_target ?? "—"}
-                    </td>
-
-                    <td
-                      style={{
-                        ...cell,
-                        color:
-                          item.success === true
-                            ? "#34d399"
-                            : item.success === false
-                            ? "#f87171"
-                            : "#94a3b8",
-                        fontWeight: 800,
-                      }}
-                    >
-                      {item.success === true
-                        ? "SUCCESS"
-                        : item.success === false
-                        ? "BLOCKED"
-                        : "—"}
-                    </td>
-
-                    <td style={cell}>
-                      {reasonLabel(item.reason)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </main>
+      timeStyle:
+        "medium",
+    }
   );
 }
 
-const cell: React.CSSProperties = {
-  padding: "14px 16px",
-  borderBottom: "1px solid #20262b",
-  fontSize: "13px",
-};
+
+function readableReason(
+  value:
+    string | null | undefined
+) {
+  if (!value) {
+    return "No blocking reason";
+  }
+
+  return value
+    .replaceAll(
+      "_",
+      " "
+    )
+    .replace(
+      /\b\w/g,
+      (
+        letter
+      ) =>
+        letter.toUpperCase()
+    );
+}
+
+
+function batchClasses(
+  status:
+    string | null | undefined
+) {
+  switch (
+    status
+  ) {
+    case "prepared":
+      return "border-blue-800 bg-blue-950/40 text-blue-300";
+
+    case "armed":
+      return "border-amber-700 bg-amber-950/40 text-amber-300";
+
+    case "completed":
+      return "border-emerald-800 bg-emerald-950/40 text-emerald-300";
+
+    case "cancelled":
+      return "border-zinc-700 bg-zinc-900 text-zinc-400";
+
+    default:
+      return "border-zinc-700 bg-zinc-900 text-zinc-300";
+  }
+}
+
+
+function StatCard({
+  label,
+  value,
+  subtext,
+}: {
+  label: string;
+  value: ReactNode;
+  subtext?: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-[#101214] p-5">
+      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {label}
+      </div>
+
+      <div className="mt-2 text-3xl font-black text-white">
+        {value}
+      </div>
+
+      {subtext ? (
+        <div className="mt-2 text-xs text-zinc-500">
+          {subtext}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+// ============================================================
+// PAGE
+// ============================================================
+
+export default async function RampControlPage() {
+
+  const supabase =
+    createAdminSupabase();
+
+
+  // ==========================================================
+  // CURRENT RAMP STATUS
+  // ==========================================================
+
+  const {
+    data:
+      rampData,
+    error:
+      rampError,
+  } = await supabase
+    .from(
+      "email_ramp_status"
+    )
+    .select("*")
+    .maybeSingle();
+
+
+  // ==========================================================
+  // PREPARED 20-CARRIER BATCH STATUS
+  // ==========================================================
+
+  const {
+    data:
+      preparedData,
+    error:
+      preparedError,
+  } = await supabase
+    .from(
+      "email_ramp_20_prepared_status"
+    )
+    .select("*")
+    .maybeSingle();
+
+
+  // ==========================================================
+  // CURRENT / LATEST PILOT
+  // ==========================================================
+
+  const {
+    data:
+      pilotData,
+    error:
+      pilotError,
+  } = await supabase
+    .from(
+      "email_pilot_batches"
+    )
+    .select(`
+      id,
+      status,
+      requested_count,
+      prepared_count,
+      armed_at,
+      cancelled_at,
+      created_at,
+      updated_at
+    `)
+    .order(
+      "created_at",
+      {
+        ascending:
+          false,
+      }
+    )
+    .limit(1)
+    .maybeSingle();
+
+
+  // ==========================================================
+  // REPLY AUTO-STOP INTEGRITY
+  // ==========================================================
+
+  const {
+    data:
+      replyData,
+    error:
+      replyError,
+  } = await supabase
+    .from(
+      "email_reply_integrity_status"
+    )
+    .select("*")
+    .maybeSingle();
+
+
+  // ==========================================================
+  // 20-CARRIER PREFLIGHT
+  // ==========================================================
+
+  const {
+    data:
+      preflightData,
+    error:
+      preflightError,
+  } = await supabase
+    .rpc(
+      "email_ramp_20_preflight"
+    );
+
+
+  // ==========================================================
+  // SAFE TYPE CASTS
+  // ==========================================================
+
+  const ramp =
+    rampData as RampStatus | null;
+
+  const prepared =
+    preparedData as PreparedStatus | null;
+
+  const currentPilot =
+    pilotData as PilotBatch | null;
+
+  const replyIntegrity =
+    replyData as ReplyIntegrity | null;
+
+
+  // ==========================================================
+  // ERROR SUMMARY
+  // ==========================================================
+
+  const errors =
+    [
+      rampError
+        ? `Ramp status: ${rampError.message}`
+        : null,
+
+      preparedError
+        ? `Prepared status: ${preparedError.message}`
+        : null,
+
+      pilotError
+        ? `Pilot status: ${pilotError.message}`
+        : null,
+
+      replyError
+        ? `Reply integrity: ${replyError.message}`
+        : null,
+
+      preflightError
+        ? `Preflight: ${preflightError.message}`
+        : null,
+    ].filter(
+      Boolean
+    ) as string[];
+
+
+  // ==========================================================
+  // DERIVED VALUES
+  // ==========================================================
+
+  const rampStage =
+    numberValue(
+      ramp?.ramp_stage
+    );
+
+  const rampTarget =
+    numberValue(
+      ramp?.ramp_target
+    );
+
+  const pilotLimit =
+    numberValue(
+      ramp?.pilot_limit
+    );
+
+  const dailyCap =
+    numberValue(
+      ramp?.daily_send_cap
+    );
+
+  const maxBatch =
+    numberValue(
+      ramp?.max_batch_size
+    );
+
+  const sendingEnabled =
+    ramp?.sending_enabled ===
+    true;
+
+  const readyFor20 =
+    ramp?.ready_for_20 ===
+    true;
+
+  const preparedCount =
+    numberValue(
+      prepared
+        ?.prepared_count
+    );
+
+  const requestedCount =
+    numberValue(
+      currentPilot
+        ?.requested_count
+    );
+
+  const pilotPreparedCount =
+    numberValue(
+      currentPilot
+        ?.prepared_count
+    );
+
+
+  const repliedLeads =
+    numberValue(
+      replyIntegrity
+        ?.replied_leads
+    );
+
+  const safelyStopped =
+    numberValue(
+      replyIntegrity
+        ?.safely_stopped_replied_leads
+    );
+
+  const unsafeReplies =
+    numberValue(
+      replyIntegrity
+        ?.replied_leads_still_running
+    );
+
+  const storedReplies =
+    numberValue(
+      replyIntegrity
+        ?.stored_replies
+    );
+
+
+  // ==========================================================
+  // RENDER
+  // ==========================================================
+
+  return (
+    <main className="min-h-screen bg-[#07090a] px-6 py-8 text-white lg:px-10">
+
+      <AutoRefresh />
+
+
+      <div className="mx-auto max-w-[1500px]">
+
+        {/* ==================================================
+            HEADER
+        ================================================== */}
+
+        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
+
+          <div>
+
+            <div className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-400">
+              Phase 027C · Production Ramp
+            </div>
+
+
+            <h1 className="mt-2 text-4xl font-black tracking-tight">
+              Production Ramp Control
+            </h1>
+
+
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+              Live operational view of SlateLane outbound capacity,
+              pilot completion, reply protection and the protected
+              20-carrier preparation state.
+            </p>
+
+          </div>
+
+
+          <div className="flex flex-wrap gap-3">
+
+            <Link
+              href="/admin/pilot/command"
+              className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm font-bold hover:bg-zinc-800"
+            >
+              ← Command Center
+            </Link>
+
+
+            <Link
+              href="/admin/pilot"
+              className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm font-bold hover:bg-zinc-800"
+            >
+              Pilot Launch →
+            </Link>
+
+          </div>
+
+        </div>
+
+
+        {/* ==================================================
+            ERRORS
+        ================================================== */}
+
+        {errors.length > 0 ? (
+
+          <section className="mt-8 rounded-2xl border border-red-900 bg-red-950/25 p-5">
+
+            <div className="font-bold text-red-300">
+              Ramp data warning
+            </div>
+
+
+            <div className="mt-3 space-y-1 text-sm text-red-200/80">
+
+              {errors.map(
+                (
+                  message
+                ) => (
+
+                  <div
+                    key={
+                      message
+                    }
+                  >
+                    {message}
+                  </div>
+
+                )
+              )}
+
+            </div>
+
+          </section>
+
+        ) : null}
+
+
+        {/* ==================================================
+            PRIMARY RAMP STATUS
+        ================================================== */}
+
+        <section className="mt-8 rounded-3xl border border-zinc-800 bg-[#0e1113] p-6">
+
+          <div className="flex flex-col justify-between gap-6 xl:flex-row xl:items-center">
+
+            <div>
+
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
+                Current Production Stage
+              </div>
+
+
+              <div className="mt-2 text-3xl font-black">
+                Stage{" "}
+                {rampStage || "—"}
+                {" — "}
+                {rampTarget || pilotLimit || "—"}
+                {" Carrier Capacity"}
+              </div>
+
+
+              <div className="mt-2 text-sm text-zinc-400">
+                {readableReason(
+                  ramp?.readiness_reason
+                )}
+              </div>
+
+            </div>
+
+
+            <div
+              className={`rounded-full border px-5 py-2 text-sm font-black ${
+                sendingEnabled
+                  ? "border-red-700 bg-red-950/40 text-red-300"
+                  : "border-emerald-700 bg-emerald-950/40 text-emerald-300"
+              }`}
+            >
+              {sendingEnabled
+                ? "MASTER SENDING ON"
+                : "MASTER SENDING OFF — SAFE"}
+            </div>
+
+          </div>
+
+
+          <div className="mt-7 h-3 overflow-hidden rounded-full bg-zinc-900">
+
+            <div
+              className="h-full rounded-full bg-cyan-400 transition-all"
+              style={{
+                width:
+                  rampStage >= 2
+                    ? "50%"
+                    : "25%",
+              }}
+            />
+
+          </div>
+
+
+          <div className="mt-2 flex justify-between text-xs text-zinc-600">
+
+            <span>
+              5
+            </span>
+
+            <span>
+              20
+            </span>
+
+            <span>
+              50
+            </span>
+
+            <span>
+              100+
+            </span>
+
+          </div>
+
+        </section>
+
+
+        {/* ==================================================
+            STATS
+        ================================================== */}
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+
+          <StatCard
+            label="Ramp Target"
+            value={
+              rampTarget ||
+              "—"
+            }
+          />
+
+
+          <StatCard
+            label="Pilot Limit"
+            value={
+              pilotLimit ||
+              "—"
+            }
+          />
+
+
+          <StatCard
+            label="Daily Send Cap"
+            value={
+              dailyCap ||
+              "—"
+            }
+          />
+
+
+          <StatCard
+            label="Processor Batch"
+            value={
+              maxBatch ||
+              "—"
+            }
+          />
+
+
+          <StatCard
+            label="Prepared"
+            value={
+              preparedCount
+            }
+            subtext="20-carrier protected batch"
+          />
+
+
+          <StatCard
+            label="Ready for 20"
+            value={
+              readyFor20
+                ? "YES"
+                : "NO"
+            }
+            subtext={
+              readableReason(
+                ramp
+                  ?.readiness_reason
+              )
+            }
+          />
+
+        </div>
+
+
+        {/* ==================================================
+            20-CARRIER PREPARATION
+        ================================================== */}
+
+        <section className="mt-6 rounded-3xl border border-blue-900/60 bg-blue-950/10 p-6">
+
+          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
+
+            <div>
+
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
+                Protected 20-Carrier Preparation
+              </div>
+
+
+              <h2 className="mt-2 text-2xl font-black">
+                {prepared
+                  ? "Batch Prepared"
+                  : "No Prepared 20-Carrier Batch"}
+              </h2>
+
+
+              {prepared
+                ?.batch_id ? (
+
+                <div className="mt-2 font-mono text-sm text-zinc-400">
+                  {prepared.batch_id}
+                </div>
+
+              ) : null}
+
+            </div>
+
+
+            {prepared
+              ?.status ? (
+
+              <span
+                className={`rounded-full border px-4 py-2 text-xs font-bold uppercase ${batchClasses(
+                  prepared.status
+                )}`}
+              >
+                {prepared.status}
+              </span>
+
+            ) : null}
+
+          </div>
+
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+            <StatCard
+              label="Ramp Target"
+              value={
+                numberValue(
+                  prepared
+                    ?.ramp_target
+                ) || "—"
+              }
+            />
+
+
+            <StatCard
+              label="Prepared Count"
+              value={
+                preparedCount
+              }
+            />
+
+
+            <StatCard
+              label="Created"
+              value={
+                formatDate(
+                  prepared
+                    ?.created_at
+                )
+              }
+            />
+
+
+            <StatCard
+              label="Cancelled"
+              value={
+                prepared
+                  ?.cancelled_at
+                  ? "YES"
+                  : "NO"
+              }
+            />
+
+          </div>
+
+
+          {prepared
+            ?.operator_note ? (
+
+            <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+
+              <div className="text-xs uppercase text-zinc-500">
+                Operator Note
+              </div>
+
+
+              <div className="mt-2 text-sm text-zinc-300">
+                {prepared.operator_note}
+              </div>
+
+            </div>
+
+          ) : null}
+
+        </section>
+
+
+        {/* ==================================================
+            CURRENT PILOT
+        ================================================== */}
+
+        <section className="mt-6 rounded-3xl border border-zinc-800 bg-[#0f1113] p-6">
+
+          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+
+            <div>
+
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
+                Latest Pilot
+              </div>
+
+
+              <h2 className="mt-2 text-2xl font-black">
+                {currentPilot
+                  ?.status
+                  ?.toUpperCase() ||
+                  "NO PILOT"}
+              </h2>
+
+
+              {currentPilot
+                ?.id ? (
+
+                <div className="mt-2 font-mono text-sm text-zinc-500">
+                  {currentPilot.id}
+                </div>
+
+              ) : null}
+
+            </div>
+
+
+            {currentPilot
+              ?.status ? (
+
+              <span
+                className={`rounded-full border px-4 py-2 text-xs font-bold uppercase ${batchClasses(
+                  currentPilot.status
+                )}`}
+              >
+                {currentPilot.status}
+              </span>
+
+            ) : null}
+
+          </div>
+
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+            <StatCard
+              label="Requested"
+              value={
+                requestedCount
+              }
+            />
+
+
+            <StatCard
+              label="Prepared"
+              value={
+                pilotPreparedCount
+              }
+            />
+
+
+            <StatCard
+              label="Armed At"
+              value={
+                formatDate(
+                  currentPilot
+                    ?.armed_at
+                )
+              }
+            />
+
+
+            <StatCard
+              label="Last Updated"
+              value={
+                formatDate(
+                  currentPilot
+                    ?.updated_at
+                )
+              }
+            />
+
+          </div>
+
+        </section>
+
+
+        {/* ==================================================
+            REPLY PROTECTION
+        ================================================== */}
+
+        <section
+          className={`mt-6 rounded-3xl border p-6 ${
+            unsafeReplies === 0
+              ? "border-emerald-900/70 bg-emerald-950/10"
+              : "border-red-800 bg-red-950/20"
+          }`}
+        >
+
+          <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center">
+
+            <div>
+
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
+                Reply Protection
+              </div>
+
+
+              <h2 className="mt-2 text-2xl font-black">
+
+                {unsafeReplies ===
+                0
+                  ? "AUTO-STOP INTEGRITY CLEAR"
+                  : "ATTENTION REQUIRED"}
+
+              </h2>
+
+            </div>
+
+
+            <div
+              className={`rounded-full border px-4 py-2 text-xs font-bold ${
+                unsafeReplies ===
+                0
+                  ? "border-emerald-800 text-emerald-300"
+                  : "border-red-800 text-red-300"
+              }`}
+            >
+
+              {unsafeReplies ===
+              0
+                ? "PROTECTED"
+                : `${unsafeReplies} UNSAFE`}
+
+            </div>
+
+          </div>
+
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+
+            <StatCard
+              label="Replied Leads"
+              value={
+                repliedLeads
+              }
+            />
+
+
+            <StatCard
+              label="Safely Stopped"
+              value={
+                safelyStopped
+              }
+            />
+
+
+            <StatCard
+              label="Still Running"
+              value={
+                unsafeReplies
+              }
+            />
+
+
+            <StatCard
+              label="Stored Replies"
+              value={
+                storedReplies
+              }
+            />
+
+
+            <StatCard
+              label="Auto-stop Events"
+              value={
+                numberValue(
+                  replyIntegrity
+                    ?.auto_stop_events
+                )
+              }
+            />
+
+          </div>
+
+        </section>
+
+
+        {/* ==================================================
+            PREFLIGHT
+        ================================================== */}
+
+        <section className="mt-6 rounded-3xl border border-zinc-800 bg-[#0f1113] p-6">
+
+          <div className="flex flex-wrap items-center justify-between gap-4">
+
+            <div>
+
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
+                Phase 027C Preflight
+              </div>
+
+
+              <h2 className="mt-2 text-2xl font-black">
+                20-Carrier Ramp Validation
+              </h2>
+
+            </div>
+
+
+            <span
+              className={`rounded-full border px-4 py-2 text-xs font-bold ${
+                preflightError
+                  ? "border-red-800 bg-red-950 text-red-300"
+                  : "border-emerald-800 bg-emerald-950 text-emerald-300"
+              }`}
+            >
+              {preflightError
+                ? "ERROR"
+                : "AVAILABLE"}
+            </span>
+
+          </div>
+
+
+          <pre className="mt-5 max-h-[420px] overflow-auto rounded-2xl border border-zinc-800 bg-black/40 p-5 text-xs leading-6 text-zinc-300">
+            {JSON.stringify(
+              preflightData ??
+                {
+                  message:
+                    "No preflight result returned.",
+                },
+              null,
+              2
+            )}
+          </pre>
+
+        </section>
+
+
+        {/* ==================================================
+            PROTECTION NOTICE
+        ================================================== */}
+
+        <div className="mt-6 rounded-2xl border border-emerald-950 bg-emerald-950/10 p-5 text-sm leading-6 text-zinc-400">
+
+          <strong className="text-emerald-400">
+            Production protection:
+          </strong>
+          {" "}
+
+          this page is operationally read-only. It does not enable
+          Master Sending, change the existing pilot, create leads,
+          create sequence enrollments or transmit email.
+
+        </div>
+
+      </div>
+
+    </main>
+  );
+}
