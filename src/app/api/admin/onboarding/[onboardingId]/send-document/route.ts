@@ -12,6 +12,10 @@ type RouteContext = {
   }>;
 };
 
+type SendableDocument =
+  | "dispatch_agreement"
+  | "carrier_packet";
+
 function getSupabaseAdmin() {
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
@@ -97,7 +101,7 @@ function escapeHtml(value: unknown) {
     .replace(/'/g, "&#039;");
 }
 
-function response(
+function jsonResponse(
   body: unknown,
   status = 200,
 ) {
@@ -110,6 +114,96 @@ function response(
   });
 }
 
+function isSendableDocument(
+  value: string,
+): value is SendableDocument {
+  return (
+    value === "dispatch_agreement" ||
+    value === "carrier_packet"
+  );
+}
+
+function getDocumentConfig(
+  documentType: SendableDocument,
+) {
+  if (documentType === "carrier_packet") {
+    return {
+      documentType:
+        "carrier_packet" as const,
+
+      title:
+        "Carrier Credential Packet",
+
+      emailSubject:
+        "Carrier Credential Packet",
+
+      buttonText:
+        "Complete Carrier Packet",
+
+      routePrefix:
+        "/carrier/onboarding/packet",
+
+      description:
+        "Complete your carrier credential packet directly in your browser.",
+
+      introduction:
+        "Slate Lane Dispatch needs your carrier credential information to complete onboarding and prepare your broker packet.",
+
+      instructions: [
+        "Review and complete your carrier and authority information.",
+        "Enter your contact, insurance, factoring, operating and dispatch preference details.",
+        "Review your information for accuracy.",
+        "Submit the secure form.",
+        "Slate Lane will automatically generate your completed Carrier Credential Packet PDF and save it to your private Document Vault.",
+      ],
+
+      successMessage:
+        "Carrier Credential Packet sent successfully.",
+
+      metadataType:
+        "carrier_credential_packet",
+    };
+  }
+
+  return {
+    documentType:
+      "dispatch_agreement" as const,
+
+    title:
+      "Carrier-Dispatcher Agreement",
+
+    emailSubject:
+      "Carrier-Dispatcher Agreement",
+
+    buttonText:
+      "Complete & Sign Agreement",
+
+    routePrefix:
+      "/carrier/onboarding",
+
+    description:
+      "Complete and electronically sign your Carrier-Dispatcher Agreement directly in your browser.",
+
+    introduction:
+      "Your secure Slate Lane Dispatch Carrier-Dispatcher Agreement is ready for review and electronic signature.",
+
+    instructions: [
+      "Review your carrier information and dispatch terms.",
+      "Review the agreement.",
+      "Enter your authorized signer information.",
+      "Type your electronic signature.",
+      "Submit the secure form.",
+      "Slate Lane will automatically create the signed PDF and store it in your private Document Vault.",
+    ],
+
+    successMessage:
+      "Carrier-Dispatcher Agreement sent successfully.",
+
+    metadataType:
+      "carrier_dispatcher_agreement",
+  };
+}
+
 export async function POST(
   request: Request,
   context: RouteContext,
@@ -119,10 +213,10 @@ export async function POST(
       await context.params;
 
     if (!onboardingId) {
-      return response(
+      return jsonResponse(
         {
-          ok: false,
-          error:
+          success: false,
+          message:
             "Missing onboarding ID.",
         },
         400,
@@ -148,8 +242,57 @@ export async function POST(
     }
 
     /*
-     * Load onboarding
-     */
+    |--------------------------------------------------------------------------
+    | DOCUMENT TYPE
+    |--------------------------------------------------------------------------
+    |
+    | The admin Document Vault sends:
+    |
+    | {
+    |   documentType: "dispatch_agreement"
+    | }
+    |
+    | or:
+    |
+    | {
+    |   documentType: "carrier_packet"
+    | }
+    |
+    */
+
+    const requestedDocumentType =
+      clean(
+        body.documentType ||
+          body.document_type,
+        50,
+      );
+
+    if (
+      !isSendableDocument(
+        requestedDocumentType,
+      )
+    ) {
+      return jsonResponse(
+        {
+          success: false,
+          message:
+            "Invalid document type. Only Carrier-Dispatcher Agreement and Carrier Credential Packet can be sent from this endpoint.",
+        },
+        400,
+      );
+    }
+
+    const config =
+      getDocumentConfig(
+        requestedDocumentType,
+      );
+
+    /*
+    |--------------------------------------------------------------------------
+    | LOAD ONBOARDING
+    |--------------------------------------------------------------------------
+    */
+
     const {
       data: onboarding,
       error: onboardingError,
@@ -161,14 +304,14 @@ export async function POST(
 
     if (onboardingError) {
       console.error(
-        "Failed to load onboarding:",
+        "Unable to load onboarding:",
         onboardingError,
       );
 
-      return response(
+      return jsonResponse(
         {
-          ok: false,
-          error:
+          success: false,
+          message:
             "Unable to load carrier onboarding.",
         },
         500,
@@ -176,10 +319,10 @@ export async function POST(
     }
 
     if (!onboarding) {
-      return response(
+      return jsonResponse(
         {
-          ok: false,
-          error:
+          success: false,
+          message:
             "Carrier onboarding was not found.",
         },
         404,
@@ -187,28 +330,28 @@ export async function POST(
     }
 
     /*
-     * Recipient
-     *
-     * Allows your admin UI to provide
-     * recipientEmail, but defaults to
-     * the primary carrier email.
-     */
+    |--------------------------------------------------------------------------
+    | RECIPIENT
+    |--------------------------------------------------------------------------
+    */
+
     const recipientEmail =
       clean(
-        body.recipientEmail ||
+        body.email ||
+          body.recipientEmail ||
           body.recipient_email ||
           onboarding.primary_contact_email,
         320,
-      );
+      ).toLowerCase();
 
     if (
       !recipientEmail ||
       !validEmail(recipientEmail)
     ) {
-      return response(
+      return jsonResponse(
         {
-          ok: false,
-          error:
+          success: false,
+          message:
             "Carrier does not have a valid email address.",
         },
         400,
@@ -229,14 +372,81 @@ export async function POST(
         200,
       );
 
+    const now =
+      new Date();
+
     /*
-     * Generate secure raw token.
-     *
-     * IMPORTANT:
-     * Only the HASH is stored in Supabase.
-     * The raw token only exists in the
-     * carrier's email URL.
-     */
+    |--------------------------------------------------------------------------
+    | REVOKE OLD ACTIVE LINK FOR SAME DOCUMENT
+    |--------------------------------------------------------------------------
+    |
+    | When Resend is clicked we do not want multiple valid secure links for
+    | the same document.
+    */
+
+    const {
+      data: oldActiveLinks,
+      error: oldLinkQueryError,
+    } = await supabase
+      .from(
+        "carrier_onboarding_links",
+      )
+      .select("id")
+      .eq(
+        "onboarding_id",
+        onboarding.id,
+      )
+      .eq(
+        "document_type",
+        config.documentType,
+      )
+      .eq("status", "active");
+
+    if (oldLinkQueryError) {
+      console.error(
+        "Unable to inspect previous secure links:",
+        oldLinkQueryError,
+      );
+    }
+
+    if (
+      oldActiveLinks &&
+      oldActiveLinks.length > 0
+    ) {
+      const ids =
+        oldActiveLinks.map(
+          (item) => item.id,
+        );
+
+      const {
+        error: revokeError,
+      } = await supabase
+        .from(
+          "carrier_onboarding_links",
+        )
+        .update({
+          status: "revoked",
+          revoked_at:
+            now.toISOString(),
+          updated_at:
+            now.toISOString(),
+        })
+        .in("id", ids);
+
+      if (revokeError) {
+        console.error(
+          "Unable to revoke old secure links:",
+          revokeError,
+        );
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE SECURE TOKEN
+    |--------------------------------------------------------------------------
+    */
+
     const rawToken =
       randomBytes(32).toString(
         "hex",
@@ -244,12 +454,6 @@ export async function POST(
 
     const tokenHash =
       sha256(rawToken);
-
-    /*
-     * Link expires in 7 days.
-     */
-    const now =
-      new Date();
 
     const expiresAt =
       new Date(
@@ -261,35 +465,38 @@ export async function POST(
             1000,
       );
 
-    /*
-     * THIS is the permanent localhost fix.
-     *
-     * We deliberately do NOT use:
-     *
-     * request.nextUrl.origin
-     *
-     * because sending from your local
-     * development CRM would produce
-     * http://localhost:3000.
-     */
     const appUrl =
       getAppUrl();
 
+    /*
+    |--------------------------------------------------------------------------
+    | DIFFERENT FORM URL FOR EACH DOCUMENT
+    |--------------------------------------------------------------------------
+    |
+    | Agreement:
+    |
+    | /carrier/onboarding/TOKEN
+    |
+    | Carrier Packet:
+    |
+    | /carrier/onboarding/packet/TOKEN
+    |
+    */
+
     const onboardingUrl =
-      `${appUrl}/carrier/onboarding/${encodeURIComponent(
+      `${appUrl}${config.routePrefix}/${encodeURIComponent(
         rawToken,
       )}`;
 
     /*
-     * Create outgoing document record first.
-     *
-     * There is no PDF yet because the carrier
-     * will complete the browser form first.
-     * The final PDF is generated when signed.
-     */
+    |--------------------------------------------------------------------------
+    | CREATE SENT DOCUMENT RECORD
+    |--------------------------------------------------------------------------
+    */
+
     const {
       data: sentDocument,
-      error: sentDocumentError,
+      error: documentError,
     } = await supabase
       .from(
         "carrier_document_records",
@@ -303,7 +510,7 @@ export async function POST(
           null,
 
         document_type:
-          "dispatch_agreement",
+          config.documentType,
 
         status:
           "sent",
@@ -318,15 +525,19 @@ export async function POST(
           delivery:
             "secure_browser_form",
 
-          agreement_type:
-            "carrier_dispatcher_agreement",
+          document_kind:
+            config.metadataType,
 
-          link_version: 1,
-
-          browser_fillable: true,
+          browser_fillable:
+            true,
 
           automatic_pdf_generation:
             true,
+
+          link_version: 2,
+
+          production_origin:
+            appUrl,
         },
 
         updated_at:
@@ -335,27 +546,33 @@ export async function POST(
       .select("*")
       .single();
 
-    if (sentDocumentError) {
+    if (
+      documentError ||
+      !sentDocument
+    ) {
       console.error(
-        "Failed to create sent document:",
-        sentDocumentError,
+        "Unable to create outgoing document record:",
+        documentError,
       );
 
-      return response(
+      return jsonResponse(
         {
-          ok: false,
-          error:
-            "Unable to prepare carrier agreement.",
+          success: false,
+          message:
+            `Unable to prepare ${config.title}.`,
         },
         500,
       );
     }
 
     /*
-     * Create secure onboarding link.
-     */
+    |--------------------------------------------------------------------------
+    | CREATE SECURE LINK
+    |--------------------------------------------------------------------------
+    */
+
     const {
-      data: onboardingLink,
+      data: secureLink,
       error: linkError,
     } = await supabase
       .from(
@@ -366,13 +583,13 @@ export async function POST(
           onboarding.id,
 
         document_type:
-          "dispatch_agreement",
-
-        recipient_email:
-          recipientEmail,
+          config.documentType,
 
         token_hash:
           tokenHash,
+
+        recipient_email:
+          recipientEmail,
 
         status:
           "active",
@@ -387,10 +604,16 @@ export async function POST(
           delivery:
             "secure_browser_form",
 
-          link_version: 1,
+          document_kind:
+            config.metadataType,
+
+          link_version: 2,
 
           production_origin:
             appUrl,
+
+          browser_route:
+            config.routePrefix,
         },
 
         updated_at:
@@ -399,16 +622,15 @@ export async function POST(
       .select("*")
       .single();
 
-    if (linkError) {
+    if (
+      linkError ||
+      !secureLink
+    ) {
       console.error(
-        "Failed to create onboarding link:",
+        "Unable to create secure document link:",
         linkError,
       );
 
-      /*
-       * Clean up sent record if secure
-       * link creation failed.
-       */
       await supabase
         .from(
           "carrier_document_records",
@@ -419,19 +641,22 @@ export async function POST(
           sentDocument.id,
         );
 
-      return response(
+      return jsonResponse(
         {
-          ok: false,
-          error:
-            "Unable to create secure onboarding link.",
+          success: false,
+          message:
+            `Unable to create secure ${config.title} link.`,
         },
         500,
       );
     }
 
     /*
-     * Email sender.
-     */
+    |--------------------------------------------------------------------------
+    | EMAIL
+    |--------------------------------------------------------------------------
+    */
+
     const fromEmail =
       process.env.RESEND_FROM_EMAIL ||
       process.env.EMAIL_FROM ||
@@ -444,6 +669,9 @@ export async function POST(
     const safeContact =
       escapeHtml(contactName);
 
+    const safeTitle =
+      escapeHtml(config.title);
+
     const expirationText =
       expiresAt.toLocaleDateString(
         "en-US",
@@ -454,10 +682,16 @@ export async function POST(
         },
       );
 
-    /*
-     * Browser-fillable carrier agreement
-     * email.
-     */
+    const instructionHtml =
+      config.instructions
+        .map(
+          (instruction, index) =>
+            `${index + 1}. ${escapeHtml(
+              instruction,
+            )}`,
+        )
+        .join("<br />");
+
     const emailHtml = `
 <!doctype html>
 <html>
@@ -483,7 +717,10 @@ export async function POST(
     cellpadding="0"
     cellspacing="0"
     border="0"
-    style="background:#f4f6f8;padding:32px 12px;"
+    style="
+      background:#f4f6f8;
+      padding:32px 12px;
+    "
   >
     <tr>
       <td align="center">
@@ -510,6 +747,7 @@ export async function POST(
                 color:#ffffff;
               "
             >
+
               <div
                 style="
                   font-size:12px;
@@ -530,8 +768,9 @@ export async function POST(
                   font-weight:700;
                 "
               >
-                Carrier-Dispatcher Agreement
+                ${safeTitle}
               </div>
+
             </td>
           </tr>
 
@@ -545,35 +784,29 @@ export async function POST(
               "
             >
 
-              <p
-                style="
-                  margin:0 0 18px;
-                "
-              >
+              <p style="margin:0 0 18px;">
                 Hi ${safeContact},
               </p>
 
-              <p
-                style="
-                  margin:0 0 18px;
-                "
-              >
-                Your secure Slate Lane Dispatch
-                carrier onboarding agreement for
-                <strong>${safeCompany}</strong>
-                is ready.
+              <p style="margin:0 0 18px;">
+                ${escapeHtml(
+                  config.introduction,
+                )}
               </p>
 
-              <p
-                style="
-                  margin:0 0 22px;
-                "
-              >
-                You can complete and electronically
-                sign the agreement directly in your
-                browser. No PDF editor, special
-                application, or document download is
-                required.
+              <p style="margin:0 0 22px;">
+                Carrier:
+                <strong>
+                  ${safeCompany}
+                </strong>
+              </p>
+
+              <p style="margin:0 0 22px;">
+                ${escapeHtml(
+                  config.description,
+                )}
+                No PDF editor or special
+                application is required.
               </p>
 
               <table
@@ -601,7 +834,9 @@ export async function POST(
                         font-weight:700;
                       "
                     >
-                      Complete &amp; Sign Agreement
+                      ${escapeHtml(
+                        config.buttonText,
+                      )}
                     </a>
                   </td>
                 </tr>
@@ -616,6 +851,7 @@ export async function POST(
                   margin:24px 0;
                 "
               >
+
                 <strong
                   style="
                     color:#0f172a;
@@ -632,15 +868,9 @@ export async function POST(
                     line-height:22px;
                   "
                 >
-                  1. Review your carrier information
-                  and dispatch terms.<br />
-                  2. Type your authorized electronic
-                  signature.<br />
-                  3. Submit the secure form.<br />
-                  4. Slate Lane automatically creates
-                  the signed PDF and stores it in your
-                  carrier Document Vault.
+                  ${instructionHtml}
                 </div>
+
               </div>
 
               <p
@@ -652,9 +882,11 @@ export async function POST(
                 "
               >
                 This secure link expires on
-                <strong>${escapeHtml(
-                  expirationText,
-                )}</strong>.
+                <strong>
+                  ${escapeHtml(
+                    expirationText,
+                  )}
+                </strong>.
               </p>
 
               <p
@@ -665,9 +897,9 @@ export async function POST(
                   line-height:20px;
                 "
               >
-                For security, please do not forward
-                this onboarding link to another
-                person.
+                For security, please do not
+                forward this private onboarding
+                link.
               </p>
 
             </td>
@@ -699,11 +931,8 @@ export async function POST(
 `;
 
     const subject =
-      `Carrier-Dispatcher Agreement — ${companyName}`;
+      `${config.emailSubject} — ${companyName}`;
 
-    /*
-     * Send with Resend.
-     */
     const {
       data: resendData,
       error: resendError,
@@ -723,15 +952,15 @@ export async function POST(
 
     if (resendError) {
       console.error(
-        "Resend email error:",
+        "Resend error:",
         resendError,
       );
 
       /*
-       * Remove secure link so a failed
-       * email does not leave an unused
-       * active token behind.
+       * Remove newly-created records because the email
+       * never reached the carrier.
        */
+
       await supabase
         .from(
           "carrier_onboarding_links",
@@ -739,7 +968,7 @@ export async function POST(
         .delete()
         .eq(
           "id",
-          onboardingLink.id,
+          secureLink.id,
         );
 
       await supabase
@@ -752,19 +981,22 @@ export async function POST(
           sentDocument.id,
         );
 
-      return response(
+      return jsonResponse(
         {
-          ok: false,
-          error:
-            "The agreement was prepared, but the email could not be sent.",
+          success: false,
+          message:
+            `${config.title} was prepared but the email could not be sent.`,
         },
         500,
       );
     }
 
     /*
-     * Store provider ID in document metadata.
-     */
+    |--------------------------------------------------------------------------
+    | UPDATE DOCUMENT METADATA
+    |--------------------------------------------------------------------------
+    */
+
     await supabase
       .from(
         "carrier_document_records",
@@ -774,12 +1006,12 @@ export async function POST(
           ...(sentDocument.metadata ||
             {}),
 
-          delivery:
-            "secure_browser_form",
-
           resend_email_id:
             resendData?.id ||
             null,
+
+          secure_link_id:
+            secureLink.id,
 
           production_origin:
             appUrl,
@@ -794,38 +1026,52 @@ export async function POST(
       );
 
     /*
-     * Mark agreement as sent.
-     */
-    const {
-      error: onboardingUpdateError,
-    } = await supabase
-      .from(
-        "carrier_onboardings",
-      )
-      .update({
-        agreement_status:
-          "sent",
-
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq(
-        "id",
-        onboarding.id,
-      );
+    |--------------------------------------------------------------------------
+    | AGREEMENT-SPECIFIC STATUS
+    |--------------------------------------------------------------------------
+    |
+    | Carrier Packet must NOT change agreement_status.
+    */
 
     if (
-      onboardingUpdateError
+      config.documentType ===
+      "dispatch_agreement"
     ) {
-      console.error(
-        "Failed updating onboarding agreement status:",
-        onboardingUpdateError,
-      );
+      const {
+        error:
+          agreementUpdateError,
+      } = await supabase
+        .from(
+          "carrier_onboardings",
+        )
+        .update({
+          agreement_status:
+            "sent",
+
+          updated_at:
+            new Date().toISOString(),
+        })
+        .eq(
+          "id",
+          onboarding.id,
+        );
+
+      if (
+        agreementUpdateError
+      ) {
+        console.error(
+          "Unable to update agreement status:",
+          agreementUpdateError,
+        );
+      }
     }
 
     /*
-     * Create audit event.
-     */
+    |--------------------------------------------------------------------------
+    | AUDIT EVENT
+    |--------------------------------------------------------------------------
+    */
+
     const {
       error: eventError,
     } = await supabase
@@ -842,6 +1088,9 @@ export async function POST(
         event_type:
           "template_sent",
 
+        from_status:
+          null,
+
         to_status:
           "sent",
 
@@ -849,62 +1098,70 @@ export async function POST(
           "admin",
 
         note:
-          `Carrier-Dispatcher Agreement sent to ${recipientEmail}`,
+          `${config.title} sent to ${recipientEmail}`,
 
         metadata: {
+          document_type:
+            config.documentType,
+
           delivery:
             "secure_browser_form",
 
           recipient_email:
             recipientEmail,
 
-          expires_at:
-            expiresAt.toISOString(),
-
           secure_link_id:
-            onboardingLink.id,
+            secureLink.id,
 
           resend_email_id:
             resendData?.id ||
             null,
 
+          expires_at:
+            expiresAt.toISOString(),
+
           production_origin:
             appUrl,
+
+          browser_route:
+            config.routePrefix,
         },
       });
 
     if (eventError) {
-      /*
-       * Do NOT fail the whole request if
-       * only the audit event failed because
-       * the actual email has already been
-       * successfully sent.
-       */
       console.error(
-        "Document event error:",
+        "Unable to create document audit event:",
         eventError,
       );
     }
 
-    return response({
-      ok: true,
+    /*
+    |--------------------------------------------------------------------------
+    | SUCCESS
+    |--------------------------------------------------------------------------
+    */
+
+    return jsonResponse({
+      success: true,
 
       message:
-        `Agreement sent successfully to ${recipientEmail}.`,
+        config.successMessage,
 
-      recipient_email:
-        recipientEmail,
+      documentType:
+        config.documentType,
 
-      expires_at:
-        expiresAt.toISOString(),
+      recipientEmail,
 
-      document_id:
+      sentDocumentId:
         sentDocument.id,
 
-      link_id:
-        onboardingLink.id,
+      secureLinkId:
+        secureLink.id,
 
-      email_id:
+      expiresAt:
+        expiresAt.toISOString(),
+
+      emailId:
         resendData?.id ||
         null,
     });
@@ -914,14 +1171,14 @@ export async function POST(
       error,
     );
 
-    return response(
+    return jsonResponse(
       {
-        ok: false,
+        success: false,
 
-        error:
+        message:
           error instanceof Error
             ? error.message
-            : "Unable to send carrier agreement.",
+            : "Unable to send onboarding document.",
       },
       500,
     );
