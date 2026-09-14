@@ -80,8 +80,10 @@ function prettyStatus(
 
   return value
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) =>
-      c.toUpperCase(),
+    .replace(
+      /\b\w/g,
+      (c) =>
+        c.toUpperCase(),
     );
 }
 
@@ -272,6 +274,13 @@ export default async function OnboardingPage() {
 
         <div className="flex flex-wrap gap-3">
           <Link
+            href="/admin/onboarding/new"
+            className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-violet-500"
+          >
+            + Start New Onboarding
+          </Link>
+
+          <Link
             href="/admin/leads"
             className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-800"
           >
@@ -378,6 +387,13 @@ export default async function OnboardingPage() {
               appear here when onboarding
               is started.
             </p>
+
+            <Link
+              href="/admin/onboarding/new"
+              className="mt-6 inline-flex rounded-xl bg-violet-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-violet-500"
+            >
+              + Start New Onboarding
+            </Link>
           </div>
         ) : (
           <div className="overflow-x-auto">
