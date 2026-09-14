@@ -47,7 +47,9 @@ type LeadRow = {
     | string
     | null;
 
-  status: string;
+  status:
+    | string
+    | null;
 
   source:
     | string
@@ -66,12 +68,13 @@ type ExistingOnboardingRow = {
     | null;
 };
 
-const ELIGIBLE_STATUSES: string[] = [
-  "interested",
-  "follow_up",
-  "meeting",
-  "client",
-];
+const ELIGIBLE_STATUSES =
+  [
+    "interested",
+    "follow_up",
+    "meeting",
+    "client",
+  ];
 
 function prettyStatus(
   value:
@@ -138,6 +141,39 @@ function validEmail(
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
     value,
   );
+}
+
+function getMissingCarrierFields(
+  lead: LeadRow,
+) {
+  const missing: string[] =
+    [];
+
+  if (
+    !lead.company_name?.trim()
+  ) {
+    missing.push(
+      "Company Name",
+    );
+  }
+
+  if (
+    !lead.carrier_dot_number
+  ) {
+    missing.push(
+      "USDOT Number",
+    );
+  }
+
+  if (
+    !lead.mc_number?.trim()
+  ) {
+    missing.push(
+      "MC Number",
+    );
+  }
+
+  return missing;
 }
 
 export default async function NewOnboardingPage({
@@ -339,7 +375,7 @@ export default async function NewOnboardingPage({
 
   /*
   |--------------------------------------------------------------------------
-  | START ONBOARDING
+  | START ONBOARDING SERVER ACTION
   |--------------------------------------------------------------------------
   */
 
@@ -468,7 +504,7 @@ export default async function NewOnboardingPage({
 
     /*
     |--------------------------------------------------------------------------
-    | READ REVIEW FORM
+    | READ FORM
     |--------------------------------------------------------------------------
     */
 
@@ -712,7 +748,7 @@ export default async function NewOnboardingPage({
 
     /*
     |--------------------------------------------------------------------------
-    | CHECK EXISTING ONBOARDING BY CARRIER
+    | EXISTING ONBOARDING FOR SAME CARRIER
     |--------------------------------------------------------------------------
     */
 
@@ -763,10 +799,6 @@ export default async function NewOnboardingPage({
           new Date()
             .toISOString();
 
-        /*
-         * Reuse existing onboarding for the same physical carrier.
-         */
-
         const {
           error:
             attachError,
@@ -777,6 +809,17 @@ export default async function NewOnboardingPage({
           .update({
             lead_id:
               lead.id,
+
+            company_name:
+              companyName,
+
+            dot_number:
+              dotNumber,
+
+            mc_number:
+              mcNumber ||
+              carrier.mc_number ||
+              null,
 
             primary_contact_name:
               contactName,
@@ -814,8 +857,10 @@ export default async function NewOnboardingPage({
         }
 
         /*
-         * Lead becomes client.
-         */
+        |--------------------------------------------------------------------------
+        | CONVERT LEAD TO CLIENT
+        |--------------------------------------------------------------------------
+        */
 
         const {
           error:
@@ -846,8 +891,10 @@ export default async function NewOnboardingPage({
         }
 
         /*
-         * Stop active sales automation.
-         */
+        |--------------------------------------------------------------------------
+        | STOP ACTIVE OUTREACH
+        |--------------------------------------------------------------------------
+        */
 
         const {
           error:
@@ -888,8 +935,10 @@ export default async function NewOnboardingPage({
         }
 
         /*
-         * Mark carrier as client.
-         */
+        |--------------------------------------------------------------------------
+        | MARK CARRIER AS CLIENT
+        |--------------------------------------------------------------------------
+        */
 
         const {
           error:
@@ -1009,7 +1058,7 @@ export default async function NewOnboardingPage({
 
     /*
     |--------------------------------------------------------------------------
-    | CONVERT LEAD TO CLIENT
+    | MARK LEAD AS CLIENT
     |--------------------------------------------------------------------------
     */
 
@@ -1087,7 +1136,7 @@ export default async function NewOnboardingPage({
 
     /*
     |--------------------------------------------------------------------------
-    | MARK CARRIER AS CLIENT
+    | MARK FMCSA CARRIER AS CLIENT
     |--------------------------------------------------------------------------
     */
 
@@ -1136,7 +1185,7 @@ export default async function NewOnboardingPage({
 
   /*
   |--------------------------------------------------------------------------
-  | SELECTED LEAD REVIEW SCREEN
+  | SELECTED LEAD REVIEW PAGE
   |--------------------------------------------------------------------------
   */
 
@@ -1204,6 +1253,11 @@ export default async function NewOnboardingPage({
       );
     }
 
+    const missingCarrierFields =
+      getMissingCarrierFields(
+        selectedLead,
+      );
+
     return (
       <div className="mx-auto max-w-4xl space-y-8">
         <div>
@@ -1228,6 +1282,66 @@ export default async function NewOnboardingPage({
             sending any onboarding document.
           </p>
         </div>
+
+        {missingCarrierFields.length >
+          0 && (
+          <div className="rounded-2xl border border-amber-700/70 bg-amber-950/20 p-5">
+            <div className="flex items-start gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-700 bg-amber-950 text-lg font-bold text-amber-300">
+                !
+              </div>
+
+              <div>
+                <h2 className="font-bold text-amber-300">
+                  Carrier information incomplete
+                  — verify before onboarding
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-400">
+                  SlateLane does not currently
+                  have all important carrier
+                  identification fields for this
+                  lead. Verify and complete the
+                  information below before
+                  creating the onboarding record.
+                </p>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {missingCarrierFields.map(
+                    (
+                      field,
+                    ) => (
+                      <span
+                        key={
+                          field
+                        }
+                        className="rounded-full border border-amber-800 bg-amber-950 px-3 py-1 text-xs font-semibold text-amber-300"
+                      >
+                        Missing:{" "}
+                        {
+                          field
+                        }
+                      </span>
+                    ),
+                  )}
+                </div>
+
+                {missingCarrierFields.includes(
+                  "MC Number",
+                ) && (
+                  <p className="mt-4 text-xs leading-5 text-zinc-500">
+                    MC Number can remain blank
+                    only when the carrier
+                    legitimately does not hold
+                    or require MC operating
+                    authority. Verify this
+                    before proceeding.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <form
           action={
@@ -1266,7 +1380,8 @@ export default async function NewOnboardingPage({
                     selectedLead.company_name ??
                     ""
                   }
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-zinc-500"
+                  placeholder="Legal carrier company name"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-zinc-500"
                 />
               </label>
 
@@ -1283,7 +1398,8 @@ export default async function NewOnboardingPage({
                     selectedLead.carrier_dot_number ??
                     ""
                   }
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-zinc-500"
+                  placeholder="USDOT number"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-zinc-500"
                 />
               </label>
 
@@ -1298,7 +1414,8 @@ export default async function NewOnboardingPage({
                     selectedLead.mc_number ??
                     ""
                   }
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-zinc-500"
+                  placeholder="MC number if applicable"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-zinc-500"
                 />
               </label>
             </div>
@@ -1323,7 +1440,7 @@ export default async function NewOnboardingPage({
                     selectedLead.company_name ??
                     ""
                   }
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-zinc-500"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-zinc-500"
                 />
               </label>
 
@@ -1338,7 +1455,7 @@ export default async function NewOnboardingPage({
                     selectedLead.phone ??
                     ""
                   }
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-zinc-500"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-zinc-500"
                 />
               </label>
 
@@ -1355,7 +1472,7 @@ export default async function NewOnboardingPage({
                     selectedLead.email ??
                     ""
                   }
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-zinc-500"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-zinc-500"
                 />
 
                 <span className="mt-2 block text-xs text-zinc-500">
@@ -1378,10 +1495,9 @@ export default async function NewOnboardingPage({
 
             <p className="mt-1 text-sm leading-6 text-zinc-400">
               Set these terms before the
-              agreement is sent. The carrier
-              will not be able to change
-              locked fee terms in the
-              Agreement.
+              agreement is sent. These values
+              are stored with the carrier
+              onboarding record.
             </p>
 
             <div className="mt-6 grid gap-5 md:grid-cols-2">
@@ -1394,7 +1510,7 @@ export default async function NewOnboardingPage({
                   required
                   name="dispatch_fee_type"
                   defaultValue="percentage"
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-violet-600"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-violet-600"
                 >
                   <option value="percentage">
                     Percentage of Gross
@@ -1422,7 +1538,7 @@ export default async function NewOnboardingPage({
                   min="0.01"
                   step="0.01"
                   placeholder="Example: 8"
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-violet-600"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-violet-600"
                 />
 
                 <span className="mt-2 block text-xs text-zinc-500">
@@ -1446,7 +1562,7 @@ export default async function NewOnboardingPage({
                   min="0"
                   step="0.01"
                   placeholder="Example: 2.50"
-                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none focus:border-violet-600"
+                  className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-white outline-none transition focus:border-violet-600"
                 />
               </label>
             </div>
@@ -1463,7 +1579,7 @@ export default async function NewOnboardingPage({
               mark the lead as a client,
               immediately stop active sales
               follow-ups, save your commercial
-              terms, and open the carrier's
+              terms, and open the carrier&apos;s
               Document Vault.
             </div>
           </div>
@@ -1490,7 +1606,7 @@ export default async function NewOnboardingPage({
 
   /*
   |--------------------------------------------------------------------------
-  | LEAD SELECTION
+  | LEAD SELECTION PAGE
   |--------------------------------------------------------------------------
   */
 
@@ -1571,80 +1687,94 @@ export default async function NewOnboardingPage({
             {availableLeads.map(
               (
                 lead,
-              ) => (
-                <div
-                  key={
-                    lead.id
-                  }
-                  className="flex flex-col gap-5 px-6 py-5 transition hover:bg-zinc-900/40 lg:flex-row lg:items-center lg:justify-between"
-                >
-                  <div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="font-semibold text-white">
-                        {lead.company_name ??
-                          lead.name ??
-                          lead.email ??
-                          "Unnamed Lead"}
+              ) => {
+                const missing =
+                  getMissingCarrierFields(
+                    lead,
+                  );
+
+                return (
+                  <div
+                    key={
+                      lead.id
+                    }
+                    className="flex flex-col gap-5 px-6 py-5 transition hover:bg-zinc-900/40 lg:flex-row lg:items-center lg:justify-between"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="font-semibold text-white">
+                          {lead.company_name ??
+                            lead.name ??
+                            lead.email ??
+                            "Unnamed Lead"}
+                        </div>
+
+                        <span
+                          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses(
+                            lead.status,
+                          )}`}
+                        >
+                          {prettyStatus(
+                            lead.status,
+                          )}
+                        </span>
+
+                        {missing.length >
+                          0 && (
+                          <span className="rounded-full border border-amber-800 bg-amber-950 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                            Info Incomplete
+                          </span>
+                        )}
                       </div>
 
-                      <span
-                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClasses(
-                          lead.status,
-                        )}`}
-                      >
-                        {prettyStatus(
-                          lead.status,
-                        )}
-                      </span>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+                        {lead.email ? (
+                          <span>
+                            {
+                              lead.email
+                            }
+                          </span>
+                        ) : null}
+
+                        {lead.carrier_dot_number ? (
+                          <span>
+                            DOT{" "}
+                            {
+                              lead.carrier_dot_number
+                            }
+                          </span>
+                        ) : null}
+
+                        {lead.mc_number ? (
+                          <span>
+                            MC{" "}
+                            {
+                              lead.mc_number
+                            }
+                          </span>
+                        ) : null}
+
+                        {lead.phone ? (
+                          <span>
+                            {
+                              lead.phone
+                            }
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
 
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
-                      {lead.email ? (
-                        <span>
-                          {
-                            lead.email
-                          }
-                        </span>
-                      ) : null}
-
-                      {lead.carrier_dot_number ? (
-                        <span>
-                          DOT{" "}
-                          {
-                            lead.carrier_dot_number
-                          }
-                        </span>
-                      ) : null}
-
-                      {lead.mc_number ? (
-                        <span>
-                          MC{" "}
-                          {
-                            lead.mc_number
-                          }
-                        </span>
-                      ) : null}
-
-                      {lead.phone ? (
-                        <span>
-                          {
-                            lead.phone
-                          }
-                        </span>
-                      ) : null}
-                    </div>
+                    <Link
+                      href={`/admin/onboarding/new?lead=${encodeURIComponent(
+                        lead.id,
+                      )}`}
+                      className="inline-flex shrink-0 items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-bold text-black transition hover:bg-zinc-200"
+                    >
+                      Review & Start
+                    </Link>
                   </div>
-
-                  <Link
-                    href={`/admin/onboarding/new?lead=${encodeURIComponent(
-                      lead.id,
-                    )}`}
-                    className="inline-flex shrink-0 items-center justify-center rounded-xl bg-white px-5 py-2.5 text-sm font-bold text-black transition hover:bg-zinc-200"
-                  >
-                    Review & Start
-                  </Link>
-                </div>
-              ),
+                );
+              },
             )}
           </div>
         </div>
