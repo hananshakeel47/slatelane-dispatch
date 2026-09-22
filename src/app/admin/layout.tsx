@@ -95,6 +95,15 @@ const navItems = [
 
   {
     href:
+      "/admin/tools",
+    label:
+      "Dispatcher Tools",
+    badge:
+      "Tools",
+  },
+
+  {
+    href:
       "/admin/import",
     label:
       "FMCSA Import",
@@ -167,6 +176,14 @@ function getBadgeClasses(
         border-violet-800
         bg-violet-950
         text-violet-300
+      `;
+
+
+    case "Tools":
+      return `
+        border-indigo-800
+        bg-indigo-950
+        text-indigo-300
       `;
 
 
