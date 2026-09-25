@@ -1,4 +1,5 @@
 import Link from "next/link";
+
 import type {
   ReactNode,
 } from "react";
@@ -100,6 +101,15 @@ const navItems = [
       "Dispatcher Tools",
     badge:
       "Tools",
+  },
+
+  {
+    href:
+      "/admin/linkedin",
+    label:
+      "LinkedIn Outreach",
+    badge:
+      "Growth",
   },
 
   {
@@ -208,10 +218,6 @@ export default function AdminLayout({
 
       <div className="flex min-h-screen">
 
-        {/* ============================================== */}
-        {/* SIDEBAR */}
-        {/* ============================================== */}
-
         <aside
           className="
             fixed
@@ -227,10 +233,6 @@ export default function AdminLayout({
             bg-[#17181c]
           "
         >
-
-          {/* ============================================ */}
-          {/* LOGO */}
-          {/* ============================================ */}
 
           <div className="px-5 pb-6 pt-6">
 
@@ -251,10 +253,6 @@ export default function AdminLayout({
 
           </div>
 
-
-          {/* ============================================ */}
-          {/* NAVIGATION */}
-          {/* ============================================ */}
 
           <nav className="flex-1 space-y-1 overflow-y-auto px-4">
 
@@ -325,10 +323,6 @@ export default function AdminLayout({
           </nav>
 
 
-          {/* ============================================ */}
-          {/* PRODUCTION STATUS */}
-          {/* ============================================ */}
-
           <div className="p-4">
 
             <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4">
@@ -353,10 +347,6 @@ export default function AdminLayout({
 
         </aside>
 
-
-        {/* ============================================== */}
-        {/* MAIN CONTENT */}
-        {/* ============================================== */}
 
         <main className="ml-[248px] min-h-screen w-[calc(100%-248px)] flex-1">
 
