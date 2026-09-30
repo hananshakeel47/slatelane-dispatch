@@ -1,28 +1,324 @@
 import Link from "next/link";
+import { unstable_cache } from "next/cache";
 
 import {
   createServerSupabase,
 } from "@/lib/supabase/server";
 
+export const dynamic =
+  "force-dynamic";
 
-export const dynamic = "force-dynamic";
+type DashboardMetrics = {
+  total_leads: number;
+  interested_leads: number;
+  follow_up_leads: number;
+  clients: number;
+  not_interested: number;
+  open_replies: number;
+  overdue_tasks: number;
+  tasks_next_24h: number;
+  active_sequences: number;
+  sent_last_24h: number;
+  delivered_last_24h: number;
+  bounced_last_24h: number;
+  failed_last_24h: number;
+  complained_last_24h: number;
+};
 
+type LaunchSettings = {
+  sending_enabled: boolean;
+  daily_send_cap: number;
+  max_batch_size: number;
+  sending_hour_start: number;
+  sending_hour_end: number;
+  sending_timezone: string;
+  minimum_carrier_score: number;
+} | null;
+
+type OutreachSettings = {
+  enabled: boolean;
+  target_new_carriers_per_day: number;
+  followups_first: boolean;
+  max_concurrent_enrollments: number;
+} | null;
+
+type SafetyState = {
+  auto_paused: boolean;
+  pause_reason: string | null;
+  last_evaluated_at: string | null;
+  sends_in_window: number;
+  bounce_rate: number;
+  failure_rate: number;
+  complaint_rate: number;
+} | null;
+
+type VerificationState = {
+  provider: string;
+  enabled: boolean;
+  send_ready_candidates: number;
+  waiting_for_external_verification: number;
+  last_job_date: string | null;
+  last_job_status: string | null;
+  last_job_requested: number;
+  last_job_deliverable: number;
+  last_job_risky: number;
+  last_job_undeliverable: number;
+  last_job_unknown: number;
+  completed_at: string | null;
+} | null;
+
+type TodayOutreach = {
+  operational_date: string;
+  status: string | null;
+  daily_send_cap: number;
+  sends_already_today: number;
+  existing_reserved_today: number;
+  new_slots_available: number;
+  candidates_available: number;
+  created_leads: number;
+  created_enrollments: number;
+  first_send_at: string | null;
+  last_send_at: string | null;
+  completed_at: string | null;
+} | null;
+
+type LinkedinStatus = {
+  enabled: boolean;
+  daily_connection_target: number;
+  daily_followup_target: number;
+  new_prospects: number;
+  pending_connections: number;
+  active_conversations: number;
+  replies: number;
+  qualified: number;
+  followups_due: number;
+  connections_requested_today: number;
+  messages_sent_today: number;
+  connected: number;
+  messaged: number;
+} | null;
+
+type Opportunity = {
+  lead_id: string;
+  company_name: string | null;
+  contact_name: string | null;
+  lead_status: string | null;
+  latest_reply_classification:
+    string | null;
+  latest_reply_requires_attention:
+    boolean | null;
+  latest_reply_received_at:
+    string | null;
+  open_task_title:
+    string | null;
+  open_task_priority:
+    string | null;
+  open_task_due_at:
+    string | null;
+  task_overdue:
+    boolean | null;
+  opportunity_score:
+    number | null;
+};
+
+type PriorityTask = {
+  id: string;
+  lead_id: string | null;
+  task_type: string | null;
+  title: string | null;
+  priority: string | null;
+  due_at: string | null;
+  company_name: string | null;
+  contact_name: string | null;
+};
+
+type RecentReply = {
+  id: string;
+  lead_id: string | null;
+  subject: string | null;
+  text_body: string | null;
+  classification: string | null;
+  requires_attention: boolean;
+  handled: boolean;
+  received_at: string | null;
+  company_name: string | null;
+  contact_name: string | null;
+};
+
+type DashboardData = {
+  generated_at: string;
+  operational_date: string;
+  metrics: DashboardMetrics;
+  launch: LaunchSettings;
+  outreach_settings: OutreachSettings;
+  safety: SafetyState;
+  verification: VerificationState;
+  today_outreach: TodayOutreach;
+  linkedin: LinkedinStatus;
+  top_opportunities: Opportunity[];
+  priority_tasks: PriorityTask[];
+  recent_replies: RecentReply[];
+};
+
+const getDashboardData =
+  unstable_cache(
+    async (): Promise<DashboardData> => {
+      const supabase =
+        createServerSupabase();
+
+      const {
+        data,
+        error,
+      } =
+        await supabase.rpc(
+          "get_admin_dashboard_summary",
+        );
+
+      if (error) {
+        throw new Error(
+          `Dashboard data failed: ${error.message}`,
+        );
+      }
+
+      return data as DashboardData;
+    },
+    [
+      "slatelane-admin-dashboard-v2",
+    ],
+    {
+      revalidate: 15,
+    },
+  );
+
+function number(
+  value:
+    | number
+    | null
+    | undefined,
+) {
+  return (
+    value ?? 0
+  ).toLocaleString();
+}
+
+function percent(
+  value:
+    | number
+    | null
+    | undefined,
+  digits = 1,
+) {
+  const numeric =
+    Number(value ?? 0);
+
+  return `${numeric.toFixed(
+    digits,
+  )}%`;
+}
+
+function safePercent(
+  value: number,
+) {
+  if (
+    !Number.isFinite(
+      value,
+    )
+  ) {
+    return 0;
+  }
+
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      value,
+    ),
+  );
+}
 
 function formatDate(
-  value: string | null
+  value:
+    | string
+    | null
+    | undefined,
 ) {
   if (!value) {
     return "—";
   }
 
-  return new Date(
-    value
-  ).toLocaleString();
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      timeZone:
+        "America/Chicago",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    },
+  ).format(
+    new Date(value),
+  );
 }
 
+function formatTime(
+  value:
+    | string
+    | null
+    | undefined,
+) {
+  if (!value) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat(
+    "en-US",
+    {
+      timeZone:
+        "America/Chicago",
+      hour: "numeric",
+      minute: "2-digit",
+    },
+  ).format(
+    new Date(value),
+  );
+}
+
+function preview(
+  text:
+    | string
+    | null
+    | undefined,
+) {
+  if (!text) {
+    return "No message preview.";
+  }
+
+  const cleaned =
+    text
+      .replace(
+        /\s+/g,
+        " ",
+      )
+      .trim();
+
+  if (
+    cleaned.length <=
+    145
+  ) {
+    return cleaned;
+  }
+
+  return `${cleaned.slice(
+    0,
+    145,
+  )}…`;
+}
 
 function classificationLabel(
-  value: string | null
+  value:
+    | string
+    | null,
 ) {
   switch (value) {
     case "interested":
@@ -43,735 +339,284 @@ function classificationLabel(
     case "unsubscribe":
       return "Unsubscribe";
 
-    case "other":
-      return "Other";
-
     default:
       return "Reply";
   }
 }
 
-
-function classificationClasses(
-  value: string | null
+function classificationClass(
+  value:
+    | string
+    | null,
 ) {
   switch (value) {
     case "interested":
-      return "border-emerald-800 bg-emerald-950 text-emerald-300";
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
 
     case "need_rates":
-      return "border-blue-800 bg-blue-950 text-blue-300";
+      return "border-blue-500/20 bg-blue-500/10 text-blue-300";
 
     case "call_me":
-      return "border-purple-800 bg-purple-950 text-purple-300";
+      return "border-violet-500/20 bg-violet-500/10 text-violet-300";
 
     case "not_interested":
-      return "border-red-900 bg-red-950 text-red-300";
-
-    case "wrong_contact":
-      return "border-amber-800 bg-amber-950 text-amber-300";
+      return "border-red-500/20 bg-red-500/10 text-red-300";
 
     default:
-      return "border-zinc-700 bg-zinc-900 text-zinc-300";
+      return "border-white/10 bg-white/[0.04] text-zinc-300";
   }
 }
 
-
-function priorityClasses(
-  priority: string
+function priorityClass(
+  priority:
+    | string
+    | null,
 ) {
-  switch (priority) {
+  switch (
+    priority
+  ) {
     case "urgent":
-      return "border-red-700 bg-red-950 text-red-300";
+      return "border-red-500/20 bg-red-500/10 text-red-300";
 
     case "high":
-      return "border-amber-700 bg-amber-950 text-amber-300";
-
-    case "low":
-      return "border-zinc-700 bg-zinc-900 text-zinc-400";
+      return "border-amber-500/20 bg-amber-500/10 text-amber-300";
 
     default:
-      return "border-blue-800 bg-blue-950 text-blue-300";
+      return "border-blue-500/20 bg-blue-500/10 text-blue-300";
   }
 }
 
-
-function taskTypeLabel(
-  type: string
-) {
-  switch (type) {
-    case "call":
-      return "Call";
-
-    case "send_rates":
-      return "Send Rates";
-
-    case "follow_up":
-      return "Follow Up";
-
-    case "email":
-      return "Email";
-
-    case "meeting":
-      return "Meeting";
-
-    default:
-      return "Task";
-  }
-}
-
-
-export default async function DashboardPage() {
-  const supabase =
-    createServerSupabase();
-
-
-  const now =
-    new Date();
-
-
-  const nowIso =
-    now.toISOString();
-
-
-  const next24Hours =
-    new Date(
-      now.getTime() +
-      24 * 60 * 60 * 1000
-    ).toISOString();
-
-
-  const previous24Hours =
-    new Date(
-      now.getTime() -
-      24 * 60 * 60 * 1000
-    ).toISOString();
-
-
-  const [
-    totalLeadsResult,
-    interestedResult,
-    followUpResult,
-    clientsResult,
-    notInterestedResult,
-    openRepliesResult,
-    overdueTasksResult,
-    next24TasksResult,
-    activeSequencesResult,
-    sent24Result,
-  ] =
-    await Promise.all([
-
-      supabase
-        .from("leads")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        ),
-
-      supabase
-        .from("leads")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "status",
-          "interested"
-        ),
-
-      supabase
-        .from("leads")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "status",
-          "follow_up"
-        ),
-
-      supabase
-        .from("leads")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "status",
-          "client"
-        ),
-
-      supabase
-        .from("leads")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "status",
-          "not_interested"
-        ),
-
-      supabase
-        .from("email_replies")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "requires_attention",
-          true
-        )
-        .eq(
-          "handled",
-          false
-        ),
-
-      supabase
-        .from("lead_tasks")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "status",
-          "open"
-        )
-        .lt(
-          "due_at",
-          nowIso
-        ),
-
-      supabase
-        .from("lead_tasks")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "status",
-          "open"
-        )
-        .gte(
-          "due_at",
-          nowIso
-        )
-        .lte(
-          "due_at",
-          next24Hours
-        ),
-
-      supabase
-        .from(
-          "email_sequence_enrollments"
-        )
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "status",
-          "active"
-        ),
-
-      supabase
-        .from("email_sends")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .gte(
-          "created_at",
-          previous24Hours
-        ),
-    ]);
-
-
-  const {
-    data: recentReplies,
-  } = await supabase
-    .from(
-      "email_replies"
-    )
-    .select(`
-      id,
-      lead_id,
-      from_email,
-      subject,
-      text_body,
-      classification,
-      requires_attention,
-      handled,
-      received_at
-    `)
-    .order(
-      "received_at",
-      {
-        ascending: false,
-      }
-    )
-    .limit(6);
-
-
-  const {
-    data: priorityTasks,
-  } = await supabase
-    .from(
-      "lead_tasks"
-    )
-    .select(`
-      id,
-      lead_id,
-      task_type,
-      title,
-      priority,
-      due_at,
-      note
-    `)
-    .eq(
-      "status",
-      "open"
-    )
-    .order(
-      "due_at",
-      {
-        ascending: true,
-      }
-    )
-    .limit(8);
-
-
-  const leadIds =
-    [
-      ...new Set(
-        [
-          ...(
-            recentReplies ??
-            []
-          ).map(
-            (
-              reply
-            ) =>
-              reply.lead_id
-          ),
-
-          ...(
-            priorityTasks ??
-            []
-          ).map(
-            (
-              task
-            ) =>
-              task.lead_id
-          ),
-        ]
-      ),
-    ];
-
-
-  const leadMap =
-    new Map<
-      string,
-      {
-        id: string;
-
-        company_name:
-          string | null;
-
-        name:
-          string | null;
-
-        email:
-          string | null;
-
-        phone:
-          string | null;
-
-        carrier_dot_number:
-          number | null;
-
-        status:
-          string | null;
-      }
-    >();
-
-
-  if (
-    leadIds.length > 0
-  ) {
-    const {
-      data: leads,
-    } = await supabase
-      .from("leads")
-      .select(`
-        id,
-        company_name,
-        name,
-        email,
-        phone,
-        carrier_dot_number,
-        status
-      `)
-      .in(
-        "id",
-        leadIds
-      );
-
-
-    for (
-      const lead
-      of leads ?? []
-    ) {
-      leadMap.set(
-        lead.id,
-        lead
-      );
-    }
-  }
-
-
-  const totalLeads =
-    totalLeadsResult.count ??
-    0;
-
-
-  const interested =
-    interestedResult.count ??
-    0;
-
-
-  const followUp =
-    followUpResult.count ??
-    0;
-
-
-  const clients =
-    clientsResult.count ??
-    0;
-
-
-  const notInterested =
-    notInterestedResult.count ??
-    0;
-
-
-  const openReplies =
-    openRepliesResult.count ??
-    0;
-
-
-  const overdueTasks =
-    overdueTasksResult.count ??
-    0;
-
-
-  const tasksNext24 =
-    next24TasksResult.count ??
-    0;
-
-
-  const activeSequences =
-    activeSequencesResult.count ??
-    0;
-
-
-  const sentLast24 =
-    sent24Result.count ??
-    0;
-
+function Dot({
+  color,
+}: {
+  color:
+    | "green"
+    | "blue"
+    | "amber"
+    | "red"
+    | "violet";
+}) {
+  const colors = {
+    green:
+      "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.45)]",
+
+    blue:
+      "bg-blue-400 shadow-[0_0_10px_rgba(96,165,250,.45)]",
+
+    amber:
+      "bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,.45)]",
+
+    red:
+      "bg-red-400 shadow-[0_0_10px_rgba(248,113,113,.45)]",
+
+    violet:
+      "bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,.45)]",
+  };
 
   return (
-    <div className="space-y-8">
+    <span
+      className={`inline-block h-2 w-2 rounded-full ${colors[color]}`}
+    />
+  );
+}
+
+function Progress({
+  value,
+}: {
+  value: number;
+}) {
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.055]">
+      <div
+        className="h-full rounded-full bg-gradient-to-r from-blue-500 to-sky-400 transition-all duration-500"
+        style={{
+          width: `${safePercent(
+            value,
+          )}%`,
+        }}
+      />
+    </div>
+  );
+}
+
+export default async function DashboardPage() {
+  const data =
+    await getDashboardData();
+
+  const {
+    metrics,
+    launch,
+    outreach_settings:
+      outreachSettings,
+    safety,
+    verification,
+    today_outreach:
+      todayOutreach,
+    linkedin,
+    top_opportunities:
+      opportunities,
+    priority_tasks:
+      priorityTasks,
+    recent_replies:
+      recentReplies,
+  } = data;
+
+  const deliveryRate =
+    metrics.sent_last_24h >
+    0
+      ? (
+          metrics.delivered_last_24h /
+          metrics.sent_last_24h
+        ) *
+        100
+      : 100;
+
+  const sequenceCapacity =
+    outreachSettings
+      ?.max_concurrent_enrollments ??
+    0;
+
+  const sequenceLoad =
+    sequenceCapacity > 0
+      ? (
+          metrics.active_sequences /
+          sequenceCapacity
+        ) *
+        100
+      : 0;
+
+  const dailyNewTarget =
+    outreachSettings
+      ?.target_new_carriers_per_day ??
+    25;
+
+  const newToday =
+    todayOutreach
+      ?.created_enrollments ??
+    0;
+
+  const newCarrierProgress =
+    dailyNewTarget > 0
+      ? (
+          newToday /
+          dailyNewTarget
+        ) *
+        100
+      : 0;
+
+  const connectionTarget =
+    linkedin
+      ?.daily_connection_target ??
+    20;
+
+  const connectionsToday =
+    linkedin
+      ?.connections_requested_today ??
+    0;
+
+  const linkedinProgress =
+    connectionTarget > 0
+      ? (
+          connectionsToday /
+          connectionTarget
+        ) *
+        100
+      : 0;
 
-      <div className="flex flex-wrap items-end justify-between gap-5">
+  const systemHealthy =
+    Boolean(
+      launch?.sending_enabled,
+    ) &&
+    !safety?.auto_paused;
 
-        <div>
+  const safe =
+    !safety?.auto_paused;
 
-          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-400">
-            SlateLane Operations
-          </div>
+  return (
+    <div className="space-y-7">
 
-          <h1 className="mt-2 text-4xl font-bold">
-            Dashboard
-          </h1>
+      {/* =====================================================
+          HERO
+      ===================================================== */}
 
-          <p className="mt-2 text-zinc-400">
-            Sales, replies, follow-ups and email automation in one place.
-          </p>
+      <section className="relative overflow-hidden rounded-[24px] border border-white/[0.075] bg-[linear-gradient(135deg,rgba(20,25,34,.94),rgba(10,14,20,.94))] px-7 py-7 shadow-[0_20px_70px_rgba(0,0,0,.2)]">
 
-        </div>
+        <div className="pointer-events-none absolute -right-28 -top-36 h-80 w-80 rounded-full bg-blue-500/[0.07] blur-3xl" />
 
+        <div className="pointer-events-none absolute bottom-[-160px] left-[25%] h-72 w-72 rounded-full bg-sky-500/[0.035] blur-3xl" />
 
-        <div className="flex flex-wrap gap-3">
+        <div className="relative flex flex-col gap-7 xl:flex-row xl:items-center xl:justify-between">
 
-          <Link
-            href="/admin/replies?handling=open"
-            className="rounded-xl border border-zinc-700 bg-zinc-900 px-5 py-3 text-sm font-semibold hover:bg-zinc-800"
-          >
-            Open Replies
-          </Link>
+          <div className="max-w-3xl">
 
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-400">
+              <Dot color="blue" />
+              Operations Command Center
+            </div>
 
-          <Link
-            href="/admin/tasks"
-            className="rounded-xl bg-white px-5 py-3 text-sm font-semibold text-black hover:bg-zinc-200"
-          >
-            View Tasks →
-          </Link>
+            <h1 className="mt-4 text-[34px] font-semibold tracking-[-0.045em] text-white md:text-[40px]">
+              Good operations start here.
+            </h1>
 
-        </div>
-
-      </div>
-
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-
-        <Link
-          href="/admin/replies?handling=open"
-          className="rounded-2xl border border-amber-900/70 bg-amber-950/20 p-5 transition hover:border-amber-700"
-        >
-
-          <div className="text-xs uppercase tracking-wide text-amber-500">
-            Open Replies
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-amber-300">
-            {openReplies.toLocaleString()}
-          </div>
-
-          <div className="mt-2 text-xs text-zinc-500">
-            Waiting for human action
-          </div>
-
-        </Link>
-
-
-        <Link
-          href="/admin/tasks"
-          className="rounded-2xl border border-red-900/70 bg-red-950/20 p-5 transition hover:border-red-700"
-        >
-
-          <div className="text-xs uppercase tracking-wide text-red-400">
-            Overdue Tasks
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-red-300">
-            {overdueTasks.toLocaleString()}
-          </div>
-
-          <div className="mt-2 text-xs text-zinc-500">
-            Needs immediate action
-          </div>
-
-        </Link>
-
-
-        <Link
-          href="/admin/tasks"
-          className="rounded-2xl border border-zinc-800 bg-zinc-900/65 p-5 transition hover:border-zinc-700"
-        >
-
-          <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Due Next 24h
-          </div>
-
-          <div className="mt-2 text-3xl font-bold">
-            {tasksNext24.toLocaleString()}
-          </div>
-
-          <div className="mt-2 text-xs text-zinc-500">
-            Upcoming sales work
-          </div>
-
-        </Link>
-
-
-        <Link
-          href="/admin/leads"
-          className="rounded-2xl border border-emerald-900/70 bg-emerald-950/20 p-5 transition hover:border-emerald-700"
-        >
-
-          <div className="text-xs uppercase tracking-wide text-emerald-500">
-            Interested Leads
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-emerald-300">
-            {interested.toLocaleString()}
-          </div>
-
-          <div className="mt-2 text-xs text-zinc-500">
-            Positive opportunities
-          </div>
-
-        </Link>
-
-      </div>
-
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-
-          <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Total Leads
-          </div>
-
-          <div className="mt-2 text-3xl font-bold">
-            {totalLeads.toLocaleString()}
-          </div>
-
-        </div>
-
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-
-          <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Follow-up Leads
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-blue-300">
-            {followUp.toLocaleString()}
-          </div>
-
-        </div>
-
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-
-          <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Active Sequences
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-purple-300">
-            {activeSequences.toLocaleString()}
-          </div>
-
-        </div>
-
-
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-
-          <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Emails Last 24h
-          </div>
-
-          <div className="mt-2 text-3xl font-bold text-cyan-300">
-            {sentLast24.toLocaleString()}
-          </div>
-
-        </div>
-
-      </div>
-
-
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45 p-6">
-
-        <div className="flex flex-wrap items-center justify-between gap-4">
-
-          <div>
-
-            <h2 className="text-xl font-semibold">
-              Sales Pipeline
-            </h2>
-
-            <p className="mt-1 text-sm text-zinc-500">
-              Current lead status distribution.
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+              Live carrier acquisition, reply handling,
+              automation health and sales opportunities
+              across SlateLane.
             </p>
 
-          </div>
+            <div className="mt-5 flex flex-wrap items-center gap-2">
 
+              <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium ${
+                systemHealthy
+                  ? "border-emerald-500/15 bg-emerald-500/[0.07] text-emerald-300"
+                  : "border-red-500/20 bg-red-500/[0.08] text-red-300"
+              }`}>
+                <Dot
+                  color={
+                    systemHealthy
+                      ? "green"
+                      : "red"
+                  }
+                />
 
-          <Link
-            href="/admin/leads"
-            className="text-sm font-semibold text-blue-400 hover:text-blue-300"
-          >
-            View Leads →
-          </Link>
+                {systemHealthy
+                  ? "All systems operational"
+                  : "Automation attention required"}
+              </div>
 
-        </div>
+              <div className="rounded-full border border-white/[0.07] bg-white/[0.025] px-3 py-1.5 text-[11px] text-zinc-500">
+                Chicago ops date:{" "}
+                <span className="text-zinc-300">
+                  {data.operational_date}
+                </span>
+              </div>
 
+              <div className="rounded-full border border-white/[0.07] bg-white/[0.025] px-3 py-1.5 text-[11px] text-zinc-500">
+                Refreshes every ~15s
+              </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-4">
-
-          <div className="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-4">
-
-            <div className="text-sm text-zinc-400">
-              Interested
-            </div>
-
-            <div className="mt-2 text-2xl font-bold text-emerald-300">
-              {interested.toLocaleString()}
-            </div>
-
-          </div>
-
-
-          <div className="rounded-xl border border-blue-900/60 bg-blue-950/20 p-4">
-
-            <div className="text-sm text-zinc-400">
-              Follow Up
-            </div>
-
-            <div className="mt-2 text-2xl font-bold text-blue-300">
-              {followUp.toLocaleString()}
             </div>
 
           </div>
 
+          <div className="flex flex-wrap gap-2">
 
-          <div className="rounded-xl border border-purple-900/60 bg-purple-950/20 p-4">
+            <Link
+              href="/admin/replies?handling=open"
+              className="inline-flex h-10 items-center rounded-xl border border-white/[0.09] bg-white/[0.035] px-4 text-[12px] font-semibold text-zinc-200 hover:bg-white/[0.065]"
+            >
+              Open inbox
+            </Link>
 
-            <div className="text-sm text-zinc-400">
-              Clients
-            </div>
-
-            <div className="mt-2 text-2xl font-bold text-purple-300">
-              {clients.toLocaleString()}
-            </div>
-
-          </div>
-
-
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
-
-            <div className="text-sm text-zinc-400">
-              Not Interested
-            </div>
-
-            <div className="mt-2 text-2xl font-bold text-zinc-300">
-              {notInterested.toLocaleString()}
-            </div>
+            <Link
+              href="/admin/tasks"
+              className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-[12px] font-semibold text-black shadow-[0_8px_24px_rgba(255,255,255,.08)] hover:bg-zinc-200"
+            >
+              Action tasks
+              <span className="ml-2">
+                →
+              </span>
+            </Link>
 
           </div>
 
@@ -779,276 +624,801 @@ export default async function DashboardPage() {
 
       </section>
 
+      {/* =====================================================
+          EXECUTIVE KPIs
+      ===================================================== */}
 
-      <div className="grid gap-6 2xl:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45">
+        <Link
+          href="/admin/replies?handling=open"
+          className="group rounded-[18px] border border-white/[0.07] bg-white/[0.025] p-5 hover:border-amber-400/20 hover:bg-white/[0.04]"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Action inbox
+            </span>
 
-          <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-5">
+            <Dot
+              color={
+                metrics.open_replies >
+                0
+                  ? "amber"
+                  : "green"
+              }
+            />
+          </div>
+
+          <div className="mt-4 text-[32px] font-semibold tracking-[-0.04em] text-white">
+            {number(
+              metrics.open_replies,
+            )}
+          </div>
+
+          <div className="mt-1 text-[11px] text-zinc-500">
+            Replies waiting for review
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/leads"
+          className="group rounded-[18px] border border-white/[0.07] bg-white/[0.025] p-5 hover:border-emerald-400/20 hover:bg-white/[0.04]"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Hot opportunities
+            </span>
+
+            <Dot color="green" />
+          </div>
+
+          <div className="mt-4 text-[32px] font-semibold tracking-[-0.04em] text-white">
+            {number(
+              metrics.interested_leads,
+            )}
+          </div>
+
+          <div className="mt-1 text-[11px] text-zinc-500">
+            Interested carriers
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/tasks"
+          className="group rounded-[18px] border border-white/[0.07] bg-white/[0.025] p-5 hover:border-red-400/20 hover:bg-white/[0.04]"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Overdue work
+            </span>
+
+            <Dot
+              color={
+                metrics.overdue_tasks >
+                0
+                  ? "red"
+                  : "green"
+              }
+            />
+          </div>
+
+          <div className="mt-4 text-[32px] font-semibold tracking-[-0.04em] text-white">
+            {number(
+              metrics.overdue_tasks,
+            )}
+          </div>
+
+          <div className="mt-1 text-[11px] text-zinc-500">
+            Tasks needing immediate action
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/monitoring"
+          className="group rounded-[18px] border border-white/[0.07] bg-white/[0.025] p-5 hover:border-blue-400/20 hover:bg-white/[0.04]"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Delivery
+            </span>
+
+            <Dot
+              color={
+                deliveryRate >= 98
+                  ? "green"
+                  : "amber"
+              }
+            />
+          </div>
+
+          <div className="mt-4 text-[32px] font-semibold tracking-[-0.04em] text-white">
+            {deliveryRate.toFixed(
+              1,
+            )}
+            <span className="ml-1 text-base font-medium text-zinc-500">
+              %
+            </span>
+          </div>
+
+          <div className="mt-1 text-[11px] text-zinc-500">
+            {number(
+              metrics.delivered_last_24h,
+            )}{" "}
+            /{" "}
+            {number(
+              metrics.sent_last_24h,
+            )}{" "}
+            delivered
+          </div>
+        </Link>
+
+      </div>
+
+      {/* =====================================================
+          MAIN OPERATIONS GRID
+      ===================================================== */}
+
+      <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
+
+        {/* HOT OPPORTUNITIES */}
+
+        <section className="overflow-hidden rounded-[20px] border border-white/[0.07] bg-white/[0.022]">
+
+          <div className="flex items-center justify-between border-b border-white/[0.065] px-5 py-4">
 
             <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                First client pipeline
+              </div>
 
-              <h2 className="text-xl font-semibold">
-                Priority Tasks
+              <h2 className="mt-1.5 text-[17px] font-semibold tracking-[-0.025em] text-white">
+                Highest-priority opportunities
               </h2>
-
-              <p className="mt-1 text-sm text-zinc-500">
-                Next actions sorted by due time.
-              </p>
-
             </div>
 
-
             <Link
-              href="/admin/tasks"
-              className="text-sm font-semibold text-blue-400"
+              href="/admin/leads"
+              className="text-[11px] font-semibold text-blue-400 hover:text-blue-300"
             >
-              All Tasks →
+              All leads →
             </Link>
 
           </div>
 
+          <div className="divide-y divide-white/[0.055]">
 
-          <div className="space-y-3 p-5">
-
-            {priorityTasks?.map(
-              (
-                task
-              ) => {
-
-                const lead =
-                  leadMap.get(
-                    task.lead_id
-                  );
-
-
-                return (
-
+            {opportunities.length >
+            0 ? (
+              opportunities.map(
+                (
+                  opportunity,
+                  index,
+                ) => (
                   <Link
                     key={
-                      task.id
+                      opportunity.lead_id
                     }
-                    href={`/admin/leads/${task.lead_id}`}
-                    className="block rounded-xl border border-zinc-800 bg-zinc-950/50 p-4 transition hover:border-zinc-700"
+                    href={`/admin/leads/${opportunity.lead_id}`}
+                    className="group flex flex-col gap-4 px-5 py-4 transition hover:bg-white/[0.02] md:flex-row md:items-center"
                   >
 
-                    <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-[11px] font-bold text-zinc-300">
+                      {String(
+                        index + 1,
+                      ).padStart(
+                        2,
+                        "0",
+                      )}
+                    </div>
 
-                      <div>
+                    <div className="min-w-0 flex-1">
 
-                        <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
 
-                          <span className="rounded-full border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300">
-                            {taskTypeLabel(
-                              task.task_type
-                            )}
+                        <div className="truncate text-[13px] font-semibold text-zinc-100">
+                          {opportunity.company_name ??
+                            opportunity.contact_name ??
+                            "Carrier opportunity"}
+                        </div>
+
+                        {opportunity.task_overdue ? (
+                          <span className="rounded-full border border-red-500/15 bg-red-500/[0.07] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
+                            Overdue
                           </span>
-
-
-                          <span
-                            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${priorityClasses(
-                              task.priority
-                            )}`}
-                          >
-                            {task.priority.toUpperCase()}
-                          </span>
-
-                        </div>
-
-
-                        <div className="mt-3 font-semibold">
-                          {task.title}
-                        </div>
-
-
-                        <div className="mt-1 text-xs text-zinc-500">
-                          {lead?.company_name ||
-                            lead?.name ||
-                            lead?.email ||
-                            "Lead"}
-                        </div>
+                        ) : null}
 
                       </div>
 
+                      <div className="mt-1.5 truncate text-[11px] text-zinc-500">
+                        {opportunity.open_task_title ??
+                          "Carrier requires follow-up"}
+                      </div>
 
-                      <div className="text-right text-xs text-zinc-500">
+                    </div>
 
-                        Due
+                    <div className="flex items-center gap-5">
 
-                        <div className="mt-1 text-zinc-300">
-                          {formatDate(
-                            task.due_at
+                      <div className="text-right">
+
+                        <div className="text-[9px] uppercase tracking-[0.12em] text-zinc-600">
+                          Score
+                        </div>
+
+                        <div className="mt-1 text-lg font-semibold text-emerald-300">
+                          {number(
+                            opportunity.opportunity_score,
                           )}
                         </div>
 
                       </div>
 
+                      <span className="text-zinc-600 transition group-hover:translate-x-1 group-hover:text-zinc-300">
+                        →
+                      </span>
+
                     </div>
 
                   </Link>
-
-                );
-              }
-            )}
-
-
-            {(
-              priorityTasks
-                ?.length ??
-              0
-            ) === 0 && (
-
-              <div className="py-12 text-center text-zinc-500">
-                No open follow-up tasks.
+                ),
+              )
+            ) : (
+              <div className="px-5 py-12 text-center text-sm text-zinc-500">
+                No hot opportunities yet.
               </div>
-
             )}
 
           </div>
 
         </section>
 
+        {/* OUTREACH */}
 
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/45">
+        <section className="rounded-[20px] border border-white/[0.07] bg-white/[0.022] p-5">
 
-          <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-5">
+          <div className="flex items-center justify-between">
 
             <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Daily acquisition
+              </div>
 
-              <h2 className="text-xl font-semibold">
-                Recent Replies
+              <h2 className="mt-1.5 text-[17px] font-semibold tracking-[-0.025em] text-white">
+                Outreach engine
               </h2>
+            </div>
 
-              <p className="mt-1 text-sm text-zinc-500">
-                Latest inbound carrier responses.
-              </p>
+            <div className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide ${
+              launch?.sending_enabled &&
+              !safety?.auto_paused
+                ? "border-emerald-500/15 bg-emerald-500/[0.07] text-emerald-300"
+                : "border-red-500/20 bg-red-500/[0.08] text-red-300"
+            }`}>
+              <Dot
+                color={
+                  launch?.sending_enabled &&
+                  !safety?.auto_paused
+                    ? "green"
+                    : "red"
+                }
+              />
+
+              {launch?.sending_enabled &&
+              !safety?.auto_paused
+                ? "Live"
+                : "Paused"}
+            </div>
+
+          </div>
+
+          <div className="mt-6">
+
+            <div className="flex items-end justify-between">
+
+              <div>
+                <div className="text-[28px] font-semibold tracking-[-0.04em] text-white">
+                  {newToday}
+                  <span className="text-base font-medium text-zinc-600">
+                    /{dailyNewTarget}
+                  </span>
+                </div>
+
+                <div className="mt-1 text-[11px] text-zinc-500">
+                  New carriers enrolled today
+                </div>
+              </div>
+
+              <div className="text-[11px] font-semibold text-blue-300">
+                {Math.round(
+                  safePercent(
+                    newCarrierProgress,
+                  ),
+                )}
+                %
+              </div>
 
             </div>
 
+            <div className="mt-3">
+              <Progress
+                value={
+                  newCarrierProgress
+                }
+              />
+            </div>
+
+          </div>
+
+          <div className="mt-6 grid grid-cols-2 gap-3">
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3.5">
+              <div className="text-[9px] uppercase tracking-[0.11em] text-zinc-600">
+                Daily cap
+              </div>
+
+              <div className="mt-2 text-lg font-semibold text-zinc-200">
+                {number(
+                  launch?.daily_send_cap,
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3.5">
+              <div className="text-[9px] uppercase tracking-[0.11em] text-zinc-600">
+                Batch size
+              </div>
+
+              <div className="mt-2 text-lg font-semibold text-zinc-200">
+                {number(
+                  launch?.max_batch_size,
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3.5">
+              <div className="text-[9px] uppercase tracking-[0.11em] text-zinc-600">
+                Verified ready
+              </div>
+
+              <div className="mt-2 text-lg font-semibold text-emerald-300">
+                {number(
+                  verification?.send_ready_candidates,
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-3.5">
+              <div className="text-[9px] uppercase tracking-[0.11em] text-zinc-600">
+                Send window
+              </div>
+
+              <div className="mt-2 text-sm font-semibold text-zinc-200">
+                {launch
+                  ? `${launch.sending_hour_start}:00–${launch.sending_hour_end}:00`
+                  : "—"}
+              </div>
+            </div>
+
+          </div>
+
+          <Link
+            href="/admin/acquisition"
+            className="mt-4 flex h-10 items-center justify-center rounded-xl border border-white/[0.075] bg-white/[0.025] text-[11px] font-semibold text-zinc-300 hover:bg-white/[0.05]"
+          >
+            Open Acquisition Center
+          </Link>
+
+        </section>
+
+      </div>
+
+      {/* =====================================================
+          SYSTEM HEALTH ROW
+      ===================================================== */}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+        <section className="rounded-[18px] border border-white/[0.07] bg-white/[0.022] p-4">
+
+          <div className="flex items-center justify-between">
+
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Sequence capacity
+            </span>
+
+            <Dot
+              color={
+                sequenceLoad <
+                90
+                  ? "green"
+                  : "amber"
+              }
+            />
+
+          </div>
+
+          <div className="mt-3 flex items-baseline gap-1">
+            <span className="text-2xl font-semibold text-white">
+              {number(
+                metrics.active_sequences,
+              )}
+            </span>
+
+            <span className="text-xs text-zinc-600">
+              /
+              {number(
+                sequenceCapacity,
+              )}
+            </span>
+          </div>
+
+          <div className="mt-3">
+            <Progress
+              value={
+                sequenceLoad
+              }
+            />
+          </div>
+
+          <div className="mt-2 text-[10px] text-zinc-600">
+            {Math.round(
+              sequenceLoad,
+            )}
+            % utilized
+          </div>
+
+        </section>
+
+        <section className="rounded-[18px] border border-white/[0.07] bg-white/[0.022] p-4">
+
+          <div className="flex items-center justify-between">
+
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Email safety
+            </span>
+
+            <Dot
+              color={
+                safe
+                  ? "green"
+                  : "red"
+              }
+            />
+
+          </div>
+
+          <div className="mt-3 text-2xl font-semibold text-white">
+            {safe
+              ? "Protected"
+              : "Paused"}
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+
+            <div>
+              <div className="text-xs font-semibold text-zinc-300">
+                {percent(
+                  safety?.bounce_rate,
+                )}
+              </div>
+              <div className="mt-1 text-[8px] uppercase tracking-wide text-zinc-600">
+                Bounce
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-zinc-300">
+                {percent(
+                  safety?.failure_rate,
+                )}
+              </div>
+              <div className="mt-1 text-[8px] uppercase tracking-wide text-zinc-600">
+                Failure
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-zinc-300">
+                {percent(
+                  safety?.complaint_rate,
+                )}
+              </div>
+              <div className="mt-1 text-[8px] uppercase tracking-wide text-zinc-600">
+                Complaint
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+        <section className="rounded-[18px] border border-white/[0.07] bg-white/[0.022] p-4">
+
+          <div className="flex items-center justify-between">
+
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              Verification
+            </span>
+
+            <Dot
+              color={
+                verification?.last_job_status ===
+                "completed"
+                  ? "green"
+                  : "amber"
+              }
+            />
+
+          </div>
+
+          <div className="mt-3 text-2xl font-semibold text-white">
+            {number(
+              verification?.last_job_deliverable,
+            )}
+            <span className="ml-1 text-xs font-medium text-zinc-600">
+              deliverable
+            </span>
+          </div>
+
+          <div className="mt-2 text-[10px] text-zinc-500">
+            Last batch:{" "}
+            {number(
+              verification?.last_job_requested,
+            )}{" "}
+            checked •{" "}
+            {number(
+              verification?.last_job_undeliverable,
+            )}{" "}
+            rejected
+          </div>
+
+        </section>
+
+        <Link
+          href="/admin/linkedin"
+          className="rounded-[18px] border border-white/[0.07] bg-white/[0.022] p-4 hover:border-blue-400/20 hover:bg-white/[0.035]"
+        >
+
+          <div className="flex items-center justify-between">
+
+            <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+              LinkedIn
+            </span>
+
+            <Dot color="blue" />
+
+          </div>
+
+          <div className="mt-3 text-2xl font-semibold text-white">
+            {connectionsToday}
+            <span className="ml-1 text-xs font-medium text-zinc-600">
+              /{connectionTarget}
+            </span>
+          </div>
+
+          <div className="mt-3">
+            <Progress
+              value={
+                linkedinProgress
+              }
+            />
+          </div>
+
+          <div className="mt-2 text-[10px] text-zinc-600">
+            {number(
+              linkedin?.pending_connections,
+            )}{" "}
+            pending •{" "}
+            {number(
+              linkedin?.new_prospects,
+            )}{" "}
+            new
+          </div>
+
+        </Link>
+
+      </div>
+
+      {/* =====================================================
+          TASKS + REPLIES
+      ===================================================== */}
+
+      <div className="grid gap-5 2xl:grid-cols-2">
+
+        {/* TASKS */}
+
+        <section className="overflow-hidden rounded-[20px] border border-white/[0.07] bg-white/[0.022]">
+
+          <div className="flex items-center justify-between border-b border-white/[0.065] px-5 py-4">
+
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Priority queue
+              </div>
+
+              <h2 className="mt-1.5 text-[17px] font-semibold tracking-[-0.025em] text-white">
+                Next actions
+              </h2>
+            </div>
 
             <Link
-              href="/admin/replies"
-              className="text-sm font-semibold text-blue-400"
+              href="/admin/tasks"
+              className="text-[11px] font-semibold text-blue-400 hover:text-blue-300"
             >
-              Inbox →
+              All tasks →
             </Link>
 
           </div>
 
+          <div className="divide-y divide-white/[0.05]">
 
-          <div className="space-y-3 p-5">
-
-            {recentReplies?.map(
-              (
-                reply
-              ) => {
-
-                const lead =
-                  leadMap.get(
-                    reply.lead_id
-                  );
-
-
-                const preview =
-                  reply.text_body
-                    ?.replace(
-                      /\s+/g,
-                      " "
-                    )
-                    .trim()
-                    .slice(
-                      0,
-                      120
-                    ) ||
-                  "No text preview";
-
-
-                return (
-
+            {priorityTasks.length >
+            0 ? (
+              priorityTasks.map(
+                (task) => (
                   <Link
                     key={
-                      reply.id
+                      task.id
                     }
-                    href={`/admin/leads/${reply.lead_id}`}
-                    className="block rounded-xl border border-zinc-800 bg-zinc-950/50 p-4 transition hover:border-zinc-700"
+                    href={
+                      task.lead_id
+                        ? `/admin/leads/${task.lead_id}`
+                        : "/admin/tasks"
+                    }
+                    className="group flex items-start gap-4 px-5 py-4 transition hover:bg-white/[0.02]"
                   >
 
-                    <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="mt-1">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-[0.09em] ${priorityClass(
+                          task.priority,
+                        )}`}
+                      >
+                        {task.priority ??
+                          "normal"}
+                      </span>
+                    </div>
 
-                      <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1">
 
-                        <div className="flex flex-wrap items-center gap-2">
-
-                          <div className="font-semibold">
-                            {lead?.company_name ||
-                              lead?.name ||
-                              reply.from_email}
-                          </div>
-
-
-                          <span
-                            className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${classificationClasses(
-                              reply.classification
-                            )}`}
-                          >
-                            {classificationLabel(
-                              reply.classification
-                            )}
-                          </span>
-
-
-                          {!reply.handled &&
-                            reply.requires_attention && (
-
-                            <span className="rounded-full border border-amber-800 bg-amber-950 px-2.5 py-1 text-[11px] font-semibold text-amber-300">
-                              Action Needed
-                            </span>
-
-                          )}
-
-                        </div>
-
-
-                        <div className="mt-2 text-sm text-zinc-400">
-                          {preview}
-                          {(
-                            reply.text_body
-                              ?.length ??
-                            0
-                          ) >
-                            120
-                            ? "…"
-                            : ""}
-                        </div>
-
+                      <div className="truncate text-[12px] font-semibold text-zinc-200">
+                        {task.title ??
+                          "Follow-up task"}
                       </div>
 
+                      <div className="mt-1 text-[10px] text-zinc-600">
+                        {task.company_name ??
+                          task.contact_name ??
+                          "Carrier"}
+                      </div>
 
-                      <div className="shrink-0 text-xs text-zinc-500">
+                    </div>
+
+                    <div className="shrink-0 text-right">
+
+                      <div className="text-[8px] uppercase tracking-[0.1em] text-zinc-700">
+                        Due
+                      </div>
+
+                      <div className="mt-1 text-[10px] text-zinc-500">
                         {formatDate(
-                          reply.received_at
+                          task.due_at,
                         )}
                       </div>
 
                     </div>
 
                   </Link>
-
-                );
-              }
+                ),
+              )
+            ) : (
+              <div className="px-5 py-12 text-center text-sm text-zinc-500">
+                No tasks waiting.
+              </div>
             )}
 
+          </div>
 
-            {(
-              recentReplies
-                ?.length ??
-              0
-            ) === 0 && (
+        </section>
 
-              <div className="py-12 text-center text-zinc-500">
-                No carrier replies yet.
+        {/* REPLIES */}
+
+        <section className="overflow-hidden rounded-[20px] border border-white/[0.07] bg-white/[0.022]">
+
+          <div className="flex items-center justify-between border-b border-white/[0.065] px-5 py-4">
+
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Carrier inbox
               </div>
 
+              <h2 className="mt-1.5 text-[17px] font-semibold tracking-[-0.025em] text-white">
+                Recent replies
+              </h2>
+            </div>
+
+            <Link
+              href="/admin/replies"
+              className="text-[11px] font-semibold text-blue-400 hover:text-blue-300"
+            >
+              Open inbox →
+            </Link>
+
+          </div>
+
+          <div className="divide-y divide-white/[0.05]">
+
+            {recentReplies.length >
+            0 ? (
+              recentReplies.map(
+                (reply) => (
+                  <Link
+                    key={
+                      reply.id
+                    }
+                    href={
+                      reply.lead_id
+                        ? `/admin/leads/${reply.lead_id}`
+                        : "/admin/replies"
+                    }
+                    className="group block px-5 py-4 transition hover:bg-white/[0.02]"
+                  >
+
+                    <div className="flex items-start gap-4">
+
+                      <div
+                        className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                          reply.requires_attention &&
+                          !reply.handled
+                            ? "bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,.35)]"
+                            : "bg-zinc-700"
+                        }`}
+                      />
+
+                      <div className="min-w-0 flex-1">
+
+                        <div className="flex flex-wrap items-center gap-2">
+
+                          <div className="truncate text-[12px] font-semibold text-zinc-200">
+                            {reply.company_name ??
+                              reply.contact_name ??
+                              "Carrier reply"}
+                          </div>
+
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${classificationClass(
+                              reply.classification,
+                            )}`}
+                          >
+                            {classificationLabel(
+                              reply.classification,
+                            )}
+                          </span>
+
+                        </div>
+
+                        <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-zinc-500">
+                          {preview(
+                            reply.text_body,
+                          )}
+                        </p>
+
+                      </div>
+
+                      <div className="shrink-0 text-[9px] text-zinc-600">
+                        {formatDate(
+                          reply.received_at,
+                        )}
+                      </div>
+
+                    </div>
+
+                  </Link>
+                ),
+              )
+            ) : (
+              <div className="px-5 py-12 text-center text-sm text-zinc-500">
+                No replies yet.
+              </div>
             )}
 
           </div>
@@ -1057,43 +1427,223 @@ export default async function DashboardPage() {
 
       </div>
 
+      {/* =====================================================
+          PIPELINE + AUTOMATION
+      ===================================================== */}
 
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/35 p-6">
+      <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
 
-        <div className="flex flex-wrap items-center justify-between gap-5">
+        <section className="rounded-[20px] border border-white/[0.07] bg-white/[0.022] p-5">
 
-          <div>
+          <div className="flex items-center justify-between">
 
-            <h2 className="text-lg font-semibold">
-              Email Automation
-            </h2>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Sales pipeline
+              </div>
 
-            <p className="mt-1 text-sm text-zinc-500">
-              Sequence processing, reply detection and follow-up management.
-            </p>
+              <h2 className="mt-1.5 text-[17px] font-semibold tracking-[-0.025em] text-white">
+                Lead distribution
+              </h2>
+            </div>
 
-          </div>
-
-
-          <div className="flex flex-wrap gap-2">
-
-            <span className="rounded-full border border-emerald-800 bg-emerald-950 px-3 py-1 text-xs font-semibold text-emerald-300">
-              Scheduler Live
-            </span>
-
-            <span className="rounded-full border border-emerald-800 bg-emerald-950 px-3 py-1 text-xs font-semibold text-emerald-300">
-              Reply Detection Live
-            </span>
-
-            <span className="rounded-full border border-emerald-800 bg-emerald-950 px-3 py-1 text-xs font-semibold text-emerald-300">
-              Auto-Stop Live
-            </span>
+            <Link
+              href="/admin/leads"
+              className="text-[11px] font-semibold text-blue-400"
+            >
+              Explore →
+            </Link>
 
           </div>
 
-        </div>
+          <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
 
-      </section>
+            <div className="rounded-xl border border-emerald-500/10 bg-emerald-500/[0.045] p-4">
+              <div className="text-[9px] uppercase tracking-wide text-zinc-600">
+                Interested
+              </div>
+
+              <div className="mt-2 text-2xl font-semibold text-emerald-300">
+                {number(
+                  metrics.interested_leads,
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-blue-500/10 bg-blue-500/[0.04] p-4">
+              <div className="text-[9px] uppercase tracking-wide text-zinc-600">
+                Follow-up
+              </div>
+
+              <div className="mt-2 text-2xl font-semibold text-blue-300">
+                {number(
+                  metrics.follow_up_leads,
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-violet-500/10 bg-violet-500/[0.04] p-4">
+              <div className="text-[9px] uppercase tracking-wide text-zinc-600">
+                Clients
+              </div>
+
+              <div className="mt-2 text-2xl font-semibold text-violet-300">
+                {number(
+                  metrics.clients,
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
+              <div className="text-[9px] uppercase tracking-wide text-zinc-600">
+                Total leads
+              </div>
+
+              <div className="mt-2 text-2xl font-semibold text-zinc-200">
+                {number(
+                  metrics.total_leads,
+                )}
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+        <section className="rounded-[20px] border border-white/[0.07] bg-white/[0.022] p-5">
+
+          <div className="flex items-center justify-between">
+
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                Automation
+              </div>
+
+              <h2 className="mt-1.5 text-[17px] font-semibold tracking-[-0.025em] text-white">
+                System health
+              </h2>
+            </div>
+
+            <Link
+              href="/admin/monitoring"
+              className="text-[11px] font-semibold text-blue-400"
+            >
+              Monitoring →
+            </Link>
+
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
+              <div className="flex items-center gap-2">
+                <Dot color="green" />
+
+                <span className="text-[10px] font-semibold text-zinc-300">
+                  Scheduler
+                </span>
+              </div>
+
+              <div className="mt-2 text-[10px] text-zinc-600">
+                Automatic processing active
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
+              <div className="flex items-center gap-2">
+                <Dot color="green" />
+
+                <span className="text-[10px] font-semibold text-zinc-300">
+                  Reply detection
+                </span>
+              </div>
+
+              <div className="mt-2 text-[10px] text-zinc-600">
+                Classification running
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4">
+              <div className="flex items-center gap-2">
+                <Dot color="green" />
+
+                <span className="text-[10px] font-semibold text-zinc-300">
+                  Auto-stop
+                </span>
+              </div>
+
+              <div className="mt-2 text-[10px] text-zinc-600">
+                Replied leads protected
+              </div>
+            </div>
+
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/[0.055] pt-4 text-[10px] text-zinc-600">
+
+            <span>
+              Emails 24h:{" "}
+              <strong className="font-semibold text-zinc-300">
+                {number(
+                  metrics.sent_last_24h,
+                )}
+              </strong>
+            </span>
+
+            <span>
+              Bounce:{" "}
+              <strong className="font-semibold text-zinc-300">
+                {number(
+                  metrics.bounced_last_24h,
+                )}
+              </strong>
+            </span>
+
+            <span>
+              Failed:{" "}
+              <strong className="font-semibold text-zinc-300">
+                {number(
+                  metrics.failed_last_24h,
+                )}
+              </strong>
+            </span>
+
+            <span>
+              Complaints:{" "}
+              <strong className="font-semibold text-zinc-300">
+                {number(
+                  metrics.complained_last_24h,
+                )}
+              </strong>
+            </span>
+
+          </div>
+
+        </section>
+
+      </div>
+
+      {/* =====================================================
+          FOOTER STATUS
+      ===================================================== */}
+
+      <div className="flex flex-col gap-2 border-t border-white/[0.055] pt-5 text-[10px] text-zinc-700 sm:flex-row sm:items-center sm:justify-between">
+
+        <span>
+          SlateLane Dispatch Operations OS
+        </span>
+
+        <span>
+          Last data snapshot:{" "}
+          <span className="text-zinc-500">
+            {formatDate(
+              data.generated_at,
+            )}{" "}
+            Chicago
+          </span>
+        </span>
+
+      </div>
 
     </div>
   );
