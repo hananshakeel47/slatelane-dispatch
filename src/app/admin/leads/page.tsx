@@ -1,201 +1,83 @@
+import type {
+  ReactNode,
+} from "react";
+
 import Link from "next/link";
 
 import {
-  revalidatePath,
-} from "next/cache";
+  notFound,
+} from "next/navigation";
 
 import {
   createServerSupabase,
 } from "@/lib/supabase/server";
 
-import {
-  enrollLeadInSequence,
-  processEmailEnrollment,
-} from "@/lib/email/sequences";
-
-import {
-  DEFAULT_SEQUENCE_NAME,
-} from "@/lib/email/templates";
 
 export const dynamic =
   "force-dynamic";
 
-const PAGE_SIZE = 50;
 
-const STATUSES = [
-  "new",
-  "contacted",
-  "interested",
-  "follow_up",
-  "meeting",
-  "client",
-  "not_interested",
-] as const;
+const BUSINESS_TIMEZONE =
+  "America/Chicago";
 
-type LeadStatus =
-  (typeof STATUSES)[number];
-
-type SearchParams =
-  Record<
-    string,
-    string |
-      string[] |
-      undefined
-  >;
 
 type Props = {
-  searchParams:
-    Promise<SearchParams>;
-};
-
-type LeadRow = {
-  id: string;
-  name:
-    string | null;
-  company_name:
-    string | null;
-  email:
-    string | null;
-  phone:
-    string | null;
-  carrier_dot_number:
-    number | null;
-  mc_number:
-    string | null;
-  source:
-    string | null;
-  status:
-    string | null;
-
-  email_opt_out:
-    boolean | null;
-  email_bounced:
-    boolean | null;
-  email_complained:
-    boolean | null;
-
-  last_email_sent_at:
-    string | null;
-
-  has_replied:
-    boolean | null;
-  reply_count:
-    number | null;
-  last_reply_at:
-    string | null;
-  last_reply_classification:
-    string | null;
-  reply_requires_attention:
-    boolean | null;
-
-  created_at:
-    string | null;
-  updated_at:
-    string | null;
-};
-
-type EnrollmentRow = {
-  id: string;
-  lead_id: string;
-  status: string;
-  current_step: number;
-  next_send_at:
-    string | null;
-};
-
-function param(
   params:
-    SearchParams,
+    Promise<{
+      id: string;
+    }>;
+};
 
-  key: string,
-) {
-  const value =
-    params[key];
 
-  if (
-    Array.isArray(
-      value,
-    )
-  ) {
-    return (
-      value[0] ??
-      ""
-    );
-  }
-
-  return value ?? "";
-}
-
-function cleanSearch(
-  value: string,
-) {
-  return value
-    .trim()
-    .replace(
-      /[(),"]/g,
-      " ",
-    )
-    .slice(
-      0,
-      120,
-    );
-}
-
-function buildUrl(
-  current:
-    URLSearchParams,
-
-  changes:
-    Record<
-      string,
-      string |
-        number |
-        null |
-        undefined
-    >,
-) {
-  const next =
-    new URLSearchParams(
-      current,
-    );
-
-  for (
-    const [
-      key,
-      value,
-    ] of Object.entries(
-      changes,
-    )
-  ) {
-    if (
-      value === null ||
-      value === undefined ||
-      value === ""
-    ) {
-      next.delete(
-        key,
-      );
-    } else {
-      next.set(
-        key,
-        String(
-          value,
-        ),
-      );
+type ConversationItem =
+  | {
+      id: string;
+      type: "outgoing";
+      date: string;
+      subject: string | null;
+      status: string;
+      email: string;
+      error: string | null;
     }
-  }
+  | {
+      id: string;
+      type: "reply";
+      date: string;
+      subject: string | null;
+      text: string | null;
+      email: string;
+      attachments: number;
+      classification: string | null;
+      confidence: number | null;
+      requiresAttention: boolean;
+      handled: boolean;
+    };
 
-  const query =
-    next.toString();
 
-  return query
-    ? `/admin/leads?${query}`
-    : "/admin/leads";
-}
+type ActivityTone =
+  | "neutral"
+  | "blue"
+  | "emerald"
+  | "amber"
+  | "red"
+  | "violet";
+
+
+type ActivityItem = {
+  id: string;
+  date: string;
+  title: string;
+  detail: string | null;
+  meta: string | null;
+  tone: ActivityTone;
+};
+
 
 function prettyStatus(
   value:
-    string | null,
+    string |
+    null |
+    undefined,
 ) {
   if (!value) {
     return "Unknown";
@@ -208,102 +90,19 @@ function prettyStatus(
     )
     .replace(
       /\b\w/g,
-      (char) =>
+      (
+        char,
+      ) =>
         char.toUpperCase(),
     );
 }
 
-function statusClass(
-  status:
-    string | null,
-) {
-  switch (status) {
-    case "client":
-      return "border-violet-500/20 bg-violet-500/[0.08] text-violet-300";
-
-    case "interested":
-      return "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300";
-
-    case "meeting":
-      return "border-blue-500/20 bg-blue-500/[0.08] text-blue-300";
-
-    case "follow_up":
-      return "border-amber-500/20 bg-amber-500/[0.08] text-amber-300";
-
-    case "contacted":
-      return "border-sky-500/20 bg-sky-500/[0.08] text-sky-300";
-
-    case "not_interested":
-      return "border-red-500/20 bg-red-500/[0.08] text-red-300";
-
-    default:
-      return "border-white/[0.08] bg-white/[0.03] text-zinc-400";
-  }
-}
-
-function sequenceClass(
-  status:
-    string | null,
-) {
-  switch (status) {
-    case "active":
-      return "border-emerald-500/15 bg-emerald-500/[0.07] text-emerald-300";
-
-    case "completed":
-      return "border-blue-500/15 bg-blue-500/[0.07] text-blue-300";
-
-    case "paused":
-      return "border-amber-500/15 bg-amber-500/[0.07] text-amber-300";
-
-    case "stopped":
-      return "border-red-500/15 bg-red-500/[0.07] text-red-300";
-
-    default:
-      return "border-white/[0.07] bg-white/[0.025] text-zinc-500";
-  }
-}
-
-function classificationClass(
-  value:
-    string | null,
-) {
-  switch (value) {
-    case "interested":
-      return "border-emerald-500/15 bg-emerald-500/[0.07] text-emerald-300";
-
-    case "call_me":
-      return "border-violet-500/15 bg-violet-500/[0.07] text-violet-300";
-
-    case "need_rates":
-      return "border-blue-500/15 bg-blue-500/[0.07] text-blue-300";
-
-    case "not_interested":
-      return "border-red-500/15 bg-red-500/[0.07] text-red-300";
-
-    case "unsubscribe":
-      return "border-red-500/15 bg-red-500/[0.07] text-red-300";
-
-    default:
-      return "border-white/[0.07] bg-white/[0.025] text-zinc-500";
-  }
-}
-
-function classificationLabel(
-  value:
-    string | null,
-) {
-  if (!value) {
-    return "Replied";
-  }
-
-  return prettyStatus(
-    value,
-  );
-}
 
 function sourceLabel(
   source:
-    string | null,
+    string |
+    null |
+    undefined,
 ) {
   switch (source) {
     case "fmcsa_daily_auto":
@@ -336,9 +135,12 @@ function sourceLabel(
   }
 }
 
-function sourceClass(
+
+function sourceClasses(
   source:
-    string | null,
+    string |
+    null |
+    undefined,
 ) {
   if (
     source?.startsWith(
@@ -358,9 +160,225 @@ function sourceClass(
   return "border-white/[0.07] bg-white/[0.025] text-zinc-500";
 }
 
+
+function statusClasses(
+  status:
+    string |
+    null |
+    undefined,
+) {
+  switch (status) {
+    case "client":
+      return "border-violet-500/20 bg-violet-500/[0.08] text-violet-300";
+
+    case "interested":
+      return "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300";
+
+    case "meeting":
+      return "border-blue-500/20 bg-blue-500/[0.08] text-blue-300";
+
+    case "follow_up":
+      return "border-amber-500/20 bg-amber-500/[0.08] text-amber-300";
+
+    case "contacted":
+      return "border-sky-500/20 bg-sky-500/[0.08] text-sky-300";
+
+    case "not_interested":
+      return "border-red-500/20 bg-red-500/[0.08] text-red-300";
+
+    default:
+      return "border-white/[0.08] bg-white/[0.03] text-zinc-400";
+  }
+}
+
+
+function sequenceClasses(
+  status:
+    string |
+    null |
+    undefined,
+) {
+  switch (status) {
+    case "active":
+      return "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300";
+
+    case "completed":
+      return "border-blue-500/20 bg-blue-500/[0.07] text-blue-300";
+
+    case "paused":
+      return "border-amber-500/20 bg-amber-500/[0.07] text-amber-300";
+
+    case "stopped":
+      return "border-red-500/20 bg-red-500/[0.07] text-red-300";
+
+    default:
+      return "border-white/[0.08] bg-white/[0.03] text-zinc-500";
+  }
+}
+
+
+function emailStatusClasses(
+  status:
+    string |
+    null |
+    undefined,
+) {
+  switch (status) {
+    case "delivered":
+      return "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300";
+
+    case "sent":
+      return "border-blue-500/20 bg-blue-500/[0.07] text-blue-300";
+
+    case "scheduled":
+      return "border-violet-500/20 bg-violet-500/[0.07] text-violet-300";
+
+    case "bounced":
+    case "failed":
+    case "complained":
+    case "suppressed":
+      return "border-red-500/20 bg-red-500/[0.07] text-red-300";
+
+    default:
+      return "border-white/[0.08] bg-white/[0.03] text-zinc-500";
+  }
+}
+
+
+function classificationClasses(
+  value:
+    string |
+    null |
+    undefined,
+) {
+  switch (value) {
+    case "interested":
+      return "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300";
+
+    case "call_me":
+      return "border-violet-500/20 bg-violet-500/[0.07] text-violet-300";
+
+    case "need_rates":
+      return "border-blue-500/20 bg-blue-500/[0.07] text-blue-300";
+
+    case "not_interested":
+    case "unsubscribe":
+      return "border-red-500/20 bg-red-500/[0.07] text-red-300";
+
+    default:
+      return "border-white/[0.08] bg-white/[0.03] text-zinc-400";
+  }
+}
+
+
+function priorityClasses(
+  priority:
+    string |
+    null |
+    undefined,
+) {
+  switch (priority) {
+    case "urgent":
+      return "border-red-500/20 bg-red-500/[0.07] text-red-300";
+
+    case "high":
+      return "border-amber-500/20 bg-amber-500/[0.07] text-amber-300";
+
+    case "low":
+      return "border-white/[0.08] bg-white/[0.025] text-zinc-500";
+
+    default:
+      return "border-blue-500/20 bg-blue-500/[0.07] text-blue-300";
+  }
+}
+
+
+function healthClasses(
+  value:
+    string |
+    null |
+    undefined,
+) {
+  const normalized =
+    value?.toLowerCase() ??
+    "";
+
+  if (
+    [
+      "valid",
+      "verified",
+      "good",
+      "healthy",
+      "safe",
+      "deliverable",
+    ].includes(
+      normalized,
+    )
+  ) {
+    return "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300";
+  }
+
+  if (
+    [
+      "risky",
+      "unknown",
+      "catch_all",
+    ].includes(
+      normalized,
+    )
+  ) {
+    return "border-amber-500/20 bg-amber-500/[0.07] text-amber-300";
+  }
+
+  if (
+    [
+      "invalid",
+      "bounced",
+      "complained",
+      "blocked",
+      "unsafe",
+      "undeliverable",
+    ].includes(
+      normalized,
+    )
+  ) {
+    return "border-red-500/20 bg-red-500/[0.07] text-red-300";
+  }
+
+  return "border-white/[0.08] bg-white/[0.03] text-zinc-500";
+}
+
+
+function activityToneClasses(
+  tone:
+    ActivityTone,
+) {
+  switch (tone) {
+    case "emerald":
+      return "border-emerald-500/30 bg-emerald-400";
+
+    case "blue":
+      return "border-blue-500/30 bg-blue-400";
+
+    case "amber":
+      return "border-amber-500/30 bg-amber-400";
+
+    case "red":
+      return "border-red-500/30 bg-red-400";
+
+    case "violet":
+      return "border-violet-500/30 bg-violet-400";
+
+    default:
+      return "border-white/20 bg-zinc-500";
+  }
+}
+
+
 function formatDate(
   value:
-    string | null |
+    string |
+    null |
     undefined,
 ) {
   if (!value) {
@@ -384,13 +402,20 @@ function formatDate(
     "en-US",
     {
       timeZone:
-        "America/Chicago",
+        BUSINESS_TIMEZONE,
+
       month:
         "short",
+
       day:
         "numeric",
+
+      year:
+        "numeric",
+
       hour:
         "numeric",
+
       minute:
         "2-digit",
     },
@@ -399,633 +424,678 @@ function formatDate(
   );
 }
 
-function initials(
-  company:
-    string | null,
 
-  contact:
-    string | null,
+function formatNumber(
+  value:
+    number |
+    null |
+    undefined,
 ) {
-  const value =
-    company ||
-    contact ||
-    "Lead";
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return "—";
+  }
 
-  return (
-    value
-      .trim()
-      .split(
-        /\s+/,
-      )
-      .filter(
-        Boolean,
-      )
-      .slice(
-        0,
-        2,
-      )
-      .map(
-        (part) =>
-          part[0],
-      )
-      .join("")
-      .toUpperCase() ||
-    "LD"
+  return value.toLocaleString(
+    "en-US",
   );
 }
 
-function SearchIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-4 w-4"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle
-        cx="11"
-        cy="11"
-        r="6"
-      />
 
-      <path d="m16 16 4 4" />
-    </svg>
+function MetricCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+}) {
+  return (
+    <div className="rounded-[17px] border border-white/[0.07] bg-white/[0.022] p-4">
+
+      <div className="text-[9px] font-semibold uppercase tracking-[0.13em] text-zinc-600">
+        {label}
+      </div>
+
+      <div className="mt-3 text-lg font-semibold text-zinc-100">
+        {value}
+      </div>
+
+      {detail ? (
+        <div className="mt-1.5 text-[9px] leading-4 text-zinc-600">
+          {detail}
+        </div>
+      ) : null}
+
+    </div>
   );
 }
 
-function FilterIcon() {
+
+function Panel({
+  title,
+  subtitle,
+  action,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-4 w-4"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 6h16" />
-      <path d="M7 12h10" />
-      <path d="M10 18h4" />
-    </svg>
+    <section className="overflow-hidden rounded-[19px] border border-white/[0.07] bg-white/[0.018]">
+
+      <div className="flex items-start justify-between gap-4 border-b border-white/[0.055] px-5 py-4">
+
+        <div>
+
+          <h2 className="text-[13px] font-semibold text-zinc-200">
+            {title}
+          </h2>
+
+          {subtitle ? (
+            <p className="mt-1 text-[9px] leading-4 text-zinc-600">
+              {subtitle}
+            </p>
+          ) : null}
+
+        </div>
+
+        {action}
+
+      </div>
+
+      <div className="p-5">
+        {children}
+      </div>
+
+    </section>
   );
 }
 
-function ArrowIcon() {
+
+function InfoRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className="h-4 w-4"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M5 12h14" />
-      <path d="m14 7 5 5-5 5" />
-    </svg>
+    <div className="flex items-start justify-between gap-4 border-b border-white/[0.045] py-3 last:border-b-0">
+
+      <span className="shrink-0 text-[9px] font-medium uppercase tracking-[0.09em] text-zinc-700">
+        {label}
+      </span>
+
+      <div className="min-w-0 text-right text-[10px] leading-5 text-zinc-300">
+        {value}
+      </div>
+
+    </div>
   );
 }
 
-export default async function LeadsPage({
-  searchParams,
+
+export default async function LeadDetailPage({
+  params,
 }: Props) {
-  const params =
-    await searchParams;
+  const {
+    id,
+  } =
+    await params;
 
-  const search =
-    cleanSearch(
-      param(
-        params,
-        "q",
-      ),
-    );
-
-  const status =
-    param(
-      params,
-      "status",
-    );
-
-  const source =
-    param(
-      params,
-      "source",
-    );
-
-  const reply =
-    param(
-      params,
-      "reply",
-    );
-
-  const sequenceFilter =
-    param(
-      params,
-      "sequence",
-    );
-
-  const sort =
-    param(
-      params,
-      "sort",
-    ) ||
-    "recent";
-
-  const carrier =
-    param(
-      params,
-      "carrier",
-    );
-
-  const rawPage =
-    Number(
-      param(
-        params,
-        "page",
-      ),
-    );
-
-  const page =
-    Number.isFinite(
-      rawPage,
-    ) &&
-    rawPage > 0
-      ? Math.floor(
-          rawPage,
-        )
-      : 1;
-
-  const from =
-    (page - 1) *
-    PAGE_SIZE;
-
-  const to =
-    from +
-    PAGE_SIZE -
-    1;
-
-  /* ==========================================================
-     SERVER ACTION: UPDATE STATUS
-  ========================================================== */
-
-  async function updateStatus(
-    formData:
-      FormData,
-  ) {
-    "use server";
-
-    const id =
-      String(
-        formData.get(
-          "id",
-        ) ?? "",
-      );
-
-    const newStatus =
-      String(
-        formData.get(
-          "status",
-        ) ?? "",
-      );
-
-    if (
-      !id ||
-      !STATUSES.includes(
-        newStatus as
-          LeadStatus,
-      )
-    ) {
-      return;
-    }
-
-    const db =
-      createServerSupabase();
-
-    const now =
-      new Date()
-        .toISOString();
-
-    const {
-      error,
-    } =
-      await db
-        .from("leads")
-        .update({
-          status:
-            newStatus,
-          updated_at:
-            now,
-        })
-        .eq(
-          "id",
-          id,
-        );
-
-    if (error) {
-      throw new Error(
-        error.message,
-      );
-    }
-
-    /*
-     * A client or rejected lead
-     * must never remain inside
-     * an active email sequence.
-     */
-    if (
-      newStatus ===
-        "client" ||
-      newStatus ===
-        "not_interested"
-    ) {
-      await db
-        .from(
-          "email_sequence_enrollments",
-        )
-        .update({
-          status:
-            "stopped",
-          stopped_at:
-            now,
-          next_send_at:
-            null,
-          updated_at:
-            now,
-        })
-        .eq(
-          "lead_id",
-          id,
-        )
-        .eq(
-          "status",
-          "active",
-        );
-    }
-
-    revalidatePath(
-      "/admin/leads",
-    );
-
-    revalidatePath(
-      "/admin/dashboard",
-    );
-  }
-
-  /* ==========================================================
-     SERVER ACTION: START SEQUENCE
-  ========================================================== */
-
-  async function startSequence(
-    formData:
-      FormData,
-  ) {
-    "use server";
-
-    const leadId =
-      String(
-        formData.get(
-          "lead_id",
-        ) ?? "",
-      );
-
-    if (!leadId) {
-      return;
-    }
-
-    const db =
-      createServerSupabase();
-
-    /*
-     * Re-check safety on the
-     * server rather than trusting
-     * the button state in the UI.
-     */
-    const {
-      data: lead,
-      error:
-        leadError,
-    } =
-      await db
-        .from("leads")
-        .select(`
-          id,
-          email,
-          status,
-          email_opt_out,
-          email_bounced,
-          email_complained,
-          has_replied
-        `)
-        .eq(
-          "id",
-          leadId,
-        )
-        .maybeSingle();
-
-    if (
-      leadError ||
-      !lead
-    ) {
-      return;
-    }
-
-    const unsafe =
-      !lead.email ||
-      lead.email_opt_out ||
-      lead.email_bounced ||
-      lead.email_complained ||
-      lead.has_replied ||
-      lead.status ===
-        "client" ||
-      lead.status ===
-        "not_interested";
-
-    if (unsafe) {
-      return;
-    }
-
-    const {
-      data:
-        existingEnrollment,
-    } =
-      await db
-        .from(
-          "email_sequence_enrollments",
-        )
-        .select(
-          "id,status",
-        )
-        .eq(
-          "lead_id",
-          leadId,
-        )
-        .maybeSingle();
-
-    if (
-      existingEnrollment
-    ) {
-      return;
-    }
-
-    const {
-      data:
-        sequence,
-      error:
-        sequenceError,
-    } =
-      await db
-        .from(
-          "email_sequences",
-        )
-        .select(
-          "id",
-        )
-        .eq(
-          "name",
-          DEFAULT_SEQUENCE_NAME,
-        )
-        .eq(
-          "active",
-          true,
-        )
-        .maybeSingle();
-
-    if (
-      sequenceError ||
-      !sequence
-    ) {
-      throw new Error(
-        sequenceError?.message ||
-          "Default email sequence not found.",
-      );
-    }
-
-    const enrollment =
-      await enrollLeadInSequence(
-        leadId,
-        sequence.id,
-      );
-
-    /*
-     * Step 1 uses delay 0.
-     * Existing email safety logic
-     * still governs the send.
-     */
-    if (
-      enrollment.status ===
-      "active"
-    ) {
-      await processEmailEnrollment(
-        enrollment.id,
-      );
-    }
-
-    revalidatePath(
-      "/admin/leads",
-    );
-
-    revalidatePath(
-      "/admin/dashboard",
-    );
-  }
-
-  /* ==========================================================
-     LOAD DATA
-  ========================================================== */
 
   const supabase =
     createServerSupabase();
 
-  let leadQuery =
-    supabase
-      .from("leads")
-      .select(
-        `
+
+  /* ==========================================================
+     LEAD
+  ========================================================== */
+
+  const {
+    data:
+      lead,
+
+    error:
+      leadError,
+  } =
+    await supabase
+      .from(
+        "leads",
+      )
+      .select(`
+        id,
+        name,
+        company_name,
+        email,
+        phone,
+        message,
+        notes,
+
+        carrier_dot_number,
+        mc_number,
+
+        source,
+        status,
+
+        email_opt_out,
+        unsubscribed_at,
+        email_bounced,
+        email_complained,
+
+        last_email_sent_at,
+
+        has_replied,
+        reply_count,
+        last_reply_at,
+        last_reply_from,
+        last_reply_subject,
+        last_reply_classification,
+        reply_requires_attention,
+
+        created_at,
+        updated_at
+      `)
+      .eq(
+        "id",
+        id,
+      )
+      .maybeSingle();
+
+
+  if (
+    leadError ||
+    !lead
+  ) {
+    notFound();
+  }
+
+
+  /* ==========================================================
+     CARRIER
+  ========================================================== */
+
+  let carrier:
+    any =
+      null;
+
+
+  if (
+    lead.carrier_dot_number
+  ) {
+    const {
+      data,
+      error,
+    } =
+      await supabase
+        .from(
+          "carriers",
+        )
+        .select(`
           id,
-          name,
-          company_name,
-          email,
-          phone,
-          carrier_dot_number,
+          dot_number,
           mc_number,
-          source,
+
+          legal_name,
+          dba_name,
+          owner_name,
+
+          phone,
+          cell_phone,
+          email,
+          website,
+
+          city,
+          state,
+
+          status_code,
+          equipment,
+
+          power_units,
+          truck_units,
+          drivers,
+
+          safety_rating,
+
+          authority_date,
+          authority_age,
+          authority_age_days,
+          authority_status,
+          authority_type,
+
+          lead_score,
+          dispatcher_probability,
+
+          contacted,
+          meeting_booked,
+          client,
+
+          email_health_status,
+          email_health_reason,
+          email_health_updated_at,
+
+          email_last_bounced_at,
+          email_last_complained_at,
+
+          email_verification_status,
+          email_risk_score,
+          email_verification_reason,
+          email_domain,
+          email_role_based,
+          email_disposable,
+          email_free_provider,
+          email_verification_checked_at,
+
+          acquisition_source,
+          source_first_seen_at,
+          source_last_seen_at,
+
+          last_fmcsa_sync,
+          updated_at
+        `)
+        .eq(
+          "dot_number",
+          lead.carrier_dot_number,
+        )
+        .maybeSingle();
+
+
+    if (error) {
+      console.error(
+        "LEAD 360 CARRIER ERROR:",
+        error.message,
+      );
+    }
+
+    carrier =
+      data;
+  }
+
+
+  /* ==========================================================
+     RELATED CRM DATA
+  ========================================================== */
+
+  const [
+    emailSendResult,
+    replyResult,
+    enrollmentResult,
+    taskResult,
+    onboardingResult,
+  ] =
+    await Promise.all([
+
+      supabase
+        .from(
+          "email_sends",
+        )
+        .select(`
+          id,
+          to_email,
+          from_email,
+          subject,
           status,
 
-          email_opt_out,
-          email_bounced,
-          email_complained,
-          last_email_sent_at,
+          scheduled_at,
+          sent_at,
+          delivered_at,
+          bounced_at,
+          complained_at,
+          failed_at,
 
-          has_replied,
-          reply_count,
-          last_reply_at,
-          last_reply_classification,
-          reply_requires_attention,
+          error_message,
+          created_at
+        `)
+        .eq(
+          "lead_id",
+          lead.id,
+        )
+        .order(
+          "created_at",
+          {
+            ascending:
+              true,
+          },
+        ),
+
+      supabase
+        .from(
+          "email_replies",
+        )
+        .select(`
+          id,
+          from_email,
+          to_email,
+          subject,
+          text_body,
+
+          attachment_count,
+
+          received_at,
+          created_at,
+
+          classification,
+          classification_confidence,
+          classification_reason,
+          classified_at,
+
+          requires_attention,
+          handled,
+          handled_at,
+          handled_action,
+          handled_note
+        `)
+        .eq(
+          "lead_id",
+          lead.id,
+        )
+        .order(
+          "received_at",
+          {
+            ascending:
+              true,
+          },
+        ),
+
+      supabase
+        .from(
+          "email_sequence_enrollments",
+        )
+        .select(`
+          id,
+          sequence_id,
+          status,
+          current_step,
+          next_send_at,
+          started_at,
+          completed_at,
+          stopped_at,
+          created_at,
+          updated_at
+        `)
+        .eq(
+          "lead_id",
+          lead.id,
+        )
+        .order(
+          "created_at",
+          {
+            ascending:
+              false,
+          },
+        )
+        .limit(
+          1,
+        )
+        .maybeSingle(),
+
+      supabase
+        .from(
+          "lead_tasks",
+        )
+        .select(`
+          id,
+          lead_id,
+          source_reply_id,
+
+          task_type,
+          title,
+          note,
+
+          status,
+          priority,
+
+          due_at,
+          completed_at,
 
           created_at,
           updated_at
-        `,
-        {
-          count:
-            "exact",
-        },
-      );
-
-  if (
-    carrier &&
-    /^\d+$/.test(
-      carrier,
-    )
-  ) {
-    leadQuery =
-      leadQuery.eq(
-        "carrier_dot_number",
-        Number(
-          carrier,
+        `)
+        .eq(
+          "lead_id",
+          lead.id,
+        )
+        .order(
+          "due_at",
+          {
+            ascending:
+              true,
+            nullsFirst:
+              false,
+          },
+        )
+        .limit(
+          30,
         ),
-      );
-  }
 
-  if (search) {
-    if (
-      /^\d+$/.test(
-        search,
-      )
-    ) {
-      leadQuery =
-        leadQuery.or(
-          [
-            `carrier_dot_number.eq.${Number(
-              search,
-            )}`,
-            `phone.ilike.%${search}%`,
-            `mc_number.ilike.%${search}%`,
-          ].join(","),
-        );
-    } else {
-      leadQuery =
-        leadQuery.or(
-          [
-            `company_name.ilike.%${search}%`,
-            `name.ilike.%${search}%`,
-            `email.ilike.%${search}%`,
-            `phone.ilike.%${search}%`,
-            `mc_number.ilike.%${search}%`,
-          ].join(","),
-        );
-    }
-  }
+      supabase
+        .from(
+          "carrier_onboardings",
+        )
+        .select(`
+          id,
+          lead_id,
+          carrier_id,
+
+          company_name,
+          dot_number,
+          mc_number,
+
+          primary_contact_name,
+          primary_contact_email,
+          primary_contact_phone,
+
+          status,
+
+          agreement_status,
+          agreement_signed_at,
+
+          load_board_access_status,
+          load_board_provider,
+
+          dispatch_fee_type,
+          dispatch_fee_value,
+
+          minimum_rate_per_mile,
+          target_rate_per_mile,
+          weekly_revenue_target,
+
+          factoring_company,
+
+          insurance_company,
+          insurance_expiration,
+
+          onboarding_completed_at,
+          activated_at,
+
+          created_at,
+          updated_at
+        `)
+        .eq(
+          "lead_id",
+          lead.id,
+        )
+        .order(
+          "created_at",
+          {
+            ascending:
+              false,
+          },
+        )
+        .limit(
+          1,
+        )
+        .maybeSingle(),
+    ]);
+
 
   if (
-    status &&
-    STATUSES.includes(
-      status as
-        LeadStatus,
-    )
+    emailSendResult.error
   ) {
-    leadQuery =
-      leadQuery.eq(
-        "status",
-        status,
-      );
+    console.error(
+      "LEAD 360 SEND ERROR:",
+      emailSendResult.error.message,
+    );
   }
 
-  switch (source) {
-    case "fmcsa":
-      leadQuery =
-        leadQuery.like(
-          "source",
-          "fmcsa%",
-        );
-      break;
 
-    case "automated":
-      leadQuery =
-        leadQuery.in(
-          "source",
-          [
-            "fmcsa_daily_auto",
-            "fmcsa_ramp_20",
-            "fmcsa_ramp_20_verified_relaunch",
-          ],
-        );
-      break;
-
-    case "pilot":
-      leadQuery =
-        leadQuery.eq(
-          "source",
-          "fmcsa_pilot",
-        );
-      break;
-
-    case "website":
-      leadQuery =
-        leadQuery.eq(
-          "source",
-          "website",
-        );
-      break;
-
-    case "email_test":
-      leadQuery =
-        leadQuery.eq(
-          "source",
-          "email_test",
-        );
-      break;
+  if (
+    replyResult.error
+  ) {
+    console.error(
+      "LEAD 360 REPLY ERROR:",
+      replyResult.error.message,
+    );
   }
 
-  switch (reply) {
-    case "attention":
-      leadQuery =
-        leadQuery
-          .eq(
-            "has_replied",
-            true,
+
+  if (
+    enrollmentResult.error
+  ) {
+    console.error(
+      "LEAD 360 ENROLLMENT ERROR:",
+      enrollmentResult.error.message,
+    );
+  }
+
+
+  if (
+    taskResult.error
+  ) {
+    console.error(
+      "LEAD 360 TASK ERROR:",
+      taskResult.error.message,
+    );
+  }
+
+
+  if (
+    onboardingResult.error
+  ) {
+    console.error(
+      "LEAD 360 ONBOARDING ERROR:",
+      onboardingResult.error.message,
+    );
+  }
+
+
+  const emailSends =
+    emailSendResult.data ??
+    [];
+
+
+  const emailReplies =
+    replyResult.data ??
+    [];
+
+
+  const enrollment =
+    enrollmentResult.data;
+
+
+  const tasks =
+    taskResult.data ??
+    [];
+
+
+  const onboarding =
+    onboardingResult.data;
+
+
+  /* ==========================================================
+     DOCUMENT VAULT
+  ========================================================== */
+
+  let vaultStatus:
+    any =
+      null;
+
+
+  let documentEvents:
+    any[] =
+      [];
+
+
+  if (
+    onboarding?.id
+  ) {
+    const [
+      vaultResult,
+      documentEventResult,
+    ] =
+      await Promise.all([
+
+        supabase
+          .from(
+            "carrier_document_vault_status",
           )
+          .select(`
+            onboarding_id,
+            carrier_id,
+
+            company_name,
+            dot_number,
+            mc_number,
+
+            agreement_status,
+
+            dispatch_agreement_status,
+            carrier_packet_status,
+
+            w9_status,
+            w8_status,
+            coi_status,
+            authority_status,
+            factoring_noa_status,
+
+            coi_expires_at,
+
+            document_count,
+
+            agreement_ready,
+            carrier_packet_ready,
+            tax_form_ready,
+            insurance_ready,
+            authority_ready,
+            factoring_ready,
+
+            missing_documents,
+            broker_packet_ready
+          `)
           .eq(
-            "reply_requires_attention",
-            true,
-          );
-      break;
+            "onboarding_id",
+            onboarding.id,
+          )
+          .maybeSingle(),
 
-    case "replied":
-      leadQuery =
-        leadQuery.eq(
-          "has_replied",
-          true,
-        );
-      break;
+        supabase
+          .from(
+            "carrier_document_events",
+          )
+          .select(`
+            id,
+            onboarding_id,
+            document_id,
 
-    case "none":
-      leadQuery =
-        leadQuery.or(
-          "has_replied.is.null,has_replied.eq.false",
-        );
-      break;
-  }
+            event_type,
 
-  switch (sort) {
-    case "reply":
-      leadQuery =
-        leadQuery
-          .order(
-            "last_reply_at",
-            {
-              ascending:
-                false,
-              nullsFirst:
-                false,
-            },
+            from_status,
+            to_status,
+
+            actor,
+            note,
+
+            created_at
+          `)
+          .eq(
+            "onboarding_id",
+            onboarding.id,
           )
           .order(
             "created_at",
@@ -1033,282 +1103,706 @@ export default async function LeadsPage({
               ascending:
                 false,
             },
-          );
-      break;
+          )
+          .limit(
+            30,
+          ),
+      ]);
 
-    case "company":
-      leadQuery =
-        leadQuery.order(
-          "company_name",
-          {
-            ascending:
-              true,
-            nullsFirst:
-              false,
-          },
-        );
-      break;
-
-    case "updated":
-      leadQuery =
-        leadQuery.order(
-          "updated_at",
-          {
-            ascending:
-              false,
-            nullsFirst:
-              false,
-          },
-        );
-      break;
-
-    case "recent":
-    default:
-      leadQuery =
-        leadQuery.order(
-          "created_at",
-          {
-            ascending:
-              false,
-          },
-        );
-      break;
-  }
-
-  leadQuery =
-    leadQuery.range(
-      from,
-      to,
-    );
-
-  /*
-   * Run the page query and
-   * default-sequence lookup
-   * concurrently.
-   */
-  const [
-    leadResult,
-    sequenceResult,
-  ] =
-    await Promise.all([
-      leadQuery,
-
-      supabase
-        .from(
-          "email_sequences",
-        )
-        .select(
-          "id",
-        )
-        .eq(
-          "name",
-          DEFAULT_SEQUENCE_NAME,
-        )
-        .maybeSingle(),
-    ]);
-
-  const {
-    data:
-      leadData,
-    error,
-    count,
-  } = leadResult;
-
-  const leads =
-    (leadData ??
-      []) as LeadRow[];
-
-  const defaultSequence =
-    sequenceResult.data;
-
-  const leadIds =
-    leads.map(
-      (lead) =>
-        lead.id,
-    );
-
-  const enrollmentMap =
-    new Map<
-      string,
-      EnrollmentRow
-    >();
-
-  /*
-   * One enrollment query for
-   * all 50 visible leads.
-   */
-  if (
-    leadIds.length >
-      0 &&
-    defaultSequence
-  ) {
-    let enrollmentQuery =
-      supabase
-        .from(
-          "email_sequence_enrollments",
-        )
-        .select(`
-          id,
-          lead_id,
-          status,
-          current_step,
-          next_send_at
-        `)
-        .eq(
-          "sequence_id",
-          defaultSequence.id,
-        )
-        .in(
-          "lead_id",
-          leadIds,
-        );
 
     if (
-      sequenceFilter ===
-      "active"
+      vaultResult.error
     ) {
-      enrollmentQuery =
-        enrollmentQuery.eq(
-          "status",
-          "active",
-        );
-    }
-
-    const {
-      data:
-        enrollments,
-    } =
-      await enrollmentQuery;
-
-    for (
-      const enrollment
-      of (
-        enrollments ??
-        []
-      ) as EnrollmentRow[]
-    ) {
-      enrollmentMap.set(
-        enrollment.lead_id,
-        enrollment,
+      console.error(
+        "LEAD 360 VAULT ERROR:",
+        vaultResult.error.message,
       );
     }
+
+
+    if (
+      documentEventResult.error
+    ) {
+      console.error(
+        "LEAD 360 DOCUMENT EVENT ERROR:",
+        documentEventResult.error.message,
+      );
+    }
+
+
+    vaultStatus =
+      vaultResult.data;
+
+
+    documentEvents =
+      documentEventResult.data ??
+      [];
   }
 
-  /*
-   * Sequence filter needs to be
-   * applied to visible leads
-   * because sequence data lives
-   * in another table.
-   */
-  const visibleLeads =
-    sequenceFilter ===
-      "active"
-      ? leads.filter(
-          (lead) =>
-            enrollmentMap.get(
-              lead.id,
-            )?.status ===
-            "active",
-        )
-      : sequenceFilter ===
-          "none"
-        ? leads.filter(
-            (lead) =>
-              !enrollmentMap.has(
-                lead.id,
-              ),
-          )
-        : leads;
 
-  const total =
-    count ?? 0;
+  /* ==========================================================
+     COMPUTED CRM STATE
+  ========================================================== */
 
-  const totalPages =
-    Math.max(
-      1,
-      Math.ceil(
-        total /
-          PAGE_SIZE,
-      ),
+  const displayName =
+    lead.company_name ||
+    carrier?.legal_name ||
+    lead.name ||
+    lead.email ||
+    "Lead";
+
+
+  const contactName =
+    lead.name ||
+    carrier?.owner_name ||
+    "—";
+
+
+  const location =
+    [
+      carrier?.city,
+      carrier?.state,
+    ]
+      .filter(
+        Boolean,
+      )
+      .join(
+        ", ",
+      ) ||
+    "—";
+
+
+  const openTasks =
+    tasks.filter(
+      (
+        task,
+      ) =>
+        task.status ===
+        "open",
     );
 
-  const firstResult =
-    total === 0
-      ? 0
-      : from + 1;
 
-  const lastResult =
-    Math.min(
-      from +
-        PAGE_SIZE,
-      total,
+  const nextTask =
+    openTasks[0] ??
+    null;
+
+
+  const onboardingEligible =
+    [
+      "interested",
+      "follow_up",
+      "meeting",
+      "client",
+    ].includes(
+      lead.status ??
+        "",
     );
 
-  const currentParams =
-    new URLSearchParams();
+
+  const manualEmailAllowed =
+    Boolean(
+      lead.email,
+    ) &&
+    !lead.email_opt_out &&
+    !lead.email_bounced &&
+    !lead.email_complained;
+
+
+  let automationBlockReason:
+    string |
+    null =
+      null;
+
+
+  if (
+    !lead.email
+  ) {
+    automationBlockReason =
+      "No email address";
+  } else if (
+    lead.email_opt_out
+  ) {
+    automationBlockReason =
+      "Lead unsubscribed";
+  } else if (
+    lead.email_bounced
+  ) {
+    automationBlockReason =
+      "Email has bounced";
+  } else if (
+    lead.email_complained
+  ) {
+    automationBlockReason =
+      "Spam complaint received";
+  } else if (
+    lead.has_replied
+  ) {
+    automationBlockReason =
+      "Carrier replied — automated outreach must remain stopped";
+  } else if (
+    lead.status ===
+    "client"
+  ) {
+    automationBlockReason =
+      "Client status blocks prospecting automation";
+  } else if (
+    lead.status ===
+    "not_interested"
+  ) {
+    automationBlockReason =
+      "Not interested status blocks automation";
+  }
+
+
+  const latestReply =
+    emailReplies.length >
+    0
+      ? emailReplies[
+          emailReplies.length -
+            1
+        ]
+      : null;
+
+
+  const latestClassification =
+    lead.last_reply_classification ||
+    latestReply?.classification ||
+    null;
+
+
+  const replyNeedsAttention =
+    Boolean(
+      lead.reply_requires_attention ||
+      latestReply?.requires_attention,
+    );
+
+
+  const nextAction =
+    nextTask
+      ? nextTask.title
+      : replyNeedsAttention
+        ? "Review carrier reply"
+        : onboarding
+          ? vaultStatus?.broker_packet_ready
+            ? "Broker packet ready"
+            : "Continue carrier onboarding"
+          : onboardingEligible
+            ? "Start carrier onboarding"
+            : lead.has_replied
+              ? "Review conversation"
+              : "No open task";
+
+
+  /* ==========================================================
+     CONVERSATION
+  ========================================================== */
+
+  const conversation:
+    ConversationItem[] =
+      [];
+
 
   for (
-    const [
-      key,
-      value,
-    ] of Object.entries(
-      params,
-    )
+    const send
+    of emailSends
+  ) {
+    const date =
+      send.sent_at ||
+      send.created_at;
+
+
+    if (!date) {
+      continue;
+    }
+
+
+    conversation.push({
+      id:
+        send.id,
+
+      type:
+        "outgoing",
+
+      date,
+
+      subject:
+        send.subject,
+
+      status:
+        send.status,
+
+      email:
+        send.to_email,
+
+      error:
+        send.error_message,
+    });
+  }
+
+
+  for (
+    const reply
+    of emailReplies
+  ) {
+    const date =
+      reply.received_at ||
+      reply.created_at;
+
+
+    if (!date) {
+      continue;
+    }
+
+
+    conversation.push({
+      id:
+        reply.id,
+
+      type:
+        "reply",
+
+      date,
+
+      subject:
+        reply.subject,
+
+      text:
+        reply.text_body,
+
+      email:
+        reply.from_email,
+
+      attachments:
+        reply.attachment_count ??
+        0,
+
+      classification:
+        reply.classification,
+
+      confidence:
+        reply.classification_confidence ===
+          null ||
+        reply.classification_confidence ===
+          undefined
+          ? null
+          : Number(
+              reply.classification_confidence,
+            ),
+
+      requiresAttention:
+        Boolean(
+          reply.requires_attention,
+        ),
+
+      handled:
+        Boolean(
+          reply.handled,
+        ),
+    });
+  }
+
+
+  conversation.sort(
+    (
+      a,
+      b,
+    ) =>
+      new Date(
+        a.date,
+      ).getTime() -
+      new Date(
+        b.date,
+      ).getTime(),
+  );
+
+
+  /* ==========================================================
+     ACTIVITY TIMELINE
+  ========================================================== */
+
+  const activity:
+    ActivityItem[] =
+      [];
+
+
+  if (
+    lead.created_at
+  ) {
+    activity.push({
+      id:
+        `lead-${lead.id}`,
+
+      date:
+        lead.created_at,
+
+      title:
+        "Lead created",
+
+      detail:
+        `${displayName} entered the SlateLane CRM.`,
+
+      meta:
+        sourceLabel(
+          lead.source,
+        ),
+
+      tone:
+        "neutral",
+    });
+  }
+
+
+  for (
+    const send
+    of emailSends
+  ) {
+    const date =
+      send.sent_at ||
+      send.created_at;
+
+
+    if (!date) {
+      continue;
+    }
+
+
+    const failed =
+      [
+        "bounced",
+        "failed",
+        "complained",
+        "suppressed",
+      ].includes(
+        send.status,
+      );
+
+
+    activity.push({
+      id:
+        `send-${send.id}`,
+
+      date,
+
+      title:
+        `Email ${prettyStatus(
+          send.status,
+        )}`,
+
+      detail:
+        send.subject ||
+        "Outbound SlateLane email",
+
+      meta:
+        send.to_email,
+
+      tone:
+        failed
+          ? "red"
+          : send.status ===
+              "delivered"
+            ? "emerald"
+            : "blue",
+    });
+  }
+
+
+  for (
+    const reply
+    of emailReplies
+  ) {
+    const date =
+      reply.received_at ||
+      reply.created_at;
+
+
+    if (!date) {
+      continue;
+    }
+
+
+    activity.push({
+      id:
+        `reply-${reply.id}`,
+
+      date,
+
+      title:
+        reply.classification
+          ? `Carrier replied • ${prettyStatus(
+              reply.classification,
+            )}`
+          : "Carrier replied",
+
+      detail:
+        reply.subject ||
+        reply.text_body?.slice(
+          0,
+          180,
+        ) ||
+        "Inbound carrier reply",
+
+      meta:
+        reply.requires_attention
+          ? "Needs attention"
+          : reply.handled
+            ? "Handled"
+            : "Reply received",
+
+      tone:
+        reply.requires_attention
+          ? "amber"
+          : "emerald",
+    });
+  }
+
+
+  for (
+    const task
+    of tasks
   ) {
     if (
-      typeof value ===
-      "string"
+      task.created_at
     ) {
-      currentParams.set(
-        key,
-        value,
-      );
+      activity.push({
+        id:
+          `task-created-${task.id}`,
+
+        date:
+          task.created_at,
+
+        title:
+          `Task created • ${prettyStatus(
+            task.task_type,
+          )}`,
+
+        detail:
+          task.title,
+
+        meta:
+          task.due_at
+            ? `Due ${formatDate(
+                task.due_at,
+              )}`
+            : prettyStatus(
+                task.priority,
+              ),
+
+        tone:
+          task.priority ===
+            "urgent"
+            ? "red"
+            : task.priority ===
+                "high"
+              ? "amber"
+              : "violet",
+      });
+    }
+
+
+    if (
+      task.completed_at
+    ) {
+      activity.push({
+        id:
+          `task-completed-${task.id}`,
+
+        date:
+          task.completed_at,
+
+        title:
+          "Task completed",
+
+        detail:
+          task.title,
+
+        meta:
+          prettyStatus(
+            task.task_type,
+          ),
+
+        tone:
+          "emerald",
+      });
     }
   }
 
-  const activeFilterCount =
-    [
-      search,
-      status,
-      source,
-      reply,
-      sequenceFilter,
-      carrier,
-    ].filter(
-      Boolean,
-    ).length;
 
-  const repliedOnPage =
-    leads.filter(
-      (lead) =>
-        lead.has_replied,
-    ).length;
+  if (
+    onboarding?.created_at
+  ) {
+    activity.push({
+      id:
+        `onboarding-${onboarding.id}`,
 
-  const interestedOnPage =
-    leads.filter(
-      (lead) =>
-        lead.status ===
-        "interested",
-    ).length;
+      date:
+        onboarding.created_at,
 
-  const safeSequenceOnPage =
-    leads.filter(
-      (lead) =>
-        Boolean(
-          lead.email,
-        ) &&
-        !lead.email_opt_out &&
-        !lead.email_bounced &&
-        !lead.email_complained &&
-        !lead.has_replied &&
-        lead.status !==
-          "client" &&
-        lead.status !==
-          "not_interested" &&
-        !enrollmentMap.has(
-          lead.id,
+      title:
+        "Carrier onboarding started",
+
+      detail:
+        onboarding.company_name ||
+        displayName,
+
+      meta:
+        prettyStatus(
+          onboarding.status,
         ),
-    ).length;
+
+      tone:
+        "violet",
+    });
+  }
+
+
+  if (
+    onboarding?.agreement_signed_at
+  ) {
+    activity.push({
+      id:
+        `agreement-${onboarding.id}`,
+
+      date:
+        onboarding.agreement_signed_at,
+
+      title:
+        "Dispatch agreement signed",
+
+      detail:
+        onboarding.company_name ||
+        displayName,
+
+      meta:
+        "Signed",
+
+      tone:
+        "emerald",
+    });
+  }
+
+
+  if (
+    onboarding?.onboarding_completed_at
+  ) {
+    activity.push({
+      id:
+        `onboarding-completed-${onboarding.id}`,
+
+      date:
+        onboarding.onboarding_completed_at,
+
+      title:
+        "Onboarding completed",
+
+      detail:
+        onboarding.company_name ||
+        displayName,
+
+      meta:
+        "Completed",
+
+      tone:
+        "emerald",
+    });
+  }
+
+
+  if (
+    onboarding?.activated_at
+  ) {
+    activity.push({
+      id:
+        `activated-${onboarding.id}`,
+
+      date:
+        onboarding.activated_at,
+
+      title:
+        "Carrier activated",
+
+      detail:
+        "Carrier account became operational.",
+
+      meta:
+        "Active",
+
+      tone:
+        "emerald",
+    });
+  }
+
+
+  for (
+    const event
+    of documentEvents
+  ) {
+    if (
+      !event.created_at
+    ) {
+      continue;
+    }
+
+
+    activity.push({
+      id:
+        `document-${event.id}`,
+
+      date:
+        event.created_at,
+
+      title:
+        `Document • ${prettyStatus(
+          event.event_type,
+        )}`,
+
+      detail:
+        event.note ||
+        (
+          event.to_status
+            ? `Status changed to ${prettyStatus(
+                event.to_status,
+              )}.`
+            : "Carrier document activity."
+        ),
+
+      meta:
+        event.actor ||
+        null,
+
+      tone:
+        event.to_status ===
+          "approved" ||
+        event.to_status ===
+          "signed"
+          ? "emerald"
+          : event.to_status ===
+              "rejected"
+            ? "red"
+            : "blue",
+    });
+  }
+
+
+  activity.sort(
+    (
+      a,
+      b,
+    ) =>
+      new Date(
+        b.date,
+      ).getTime() -
+      new Date(
+        a.date,
+      ).getTime(),
+  );
+
+
+  const recentActivity =
+    activity.slice(
+      0,
+      40,
+    );
+
 
   return (
     <div className="space-y-6">
@@ -1317,53 +1811,157 @@ export default async function LeadsPage({
           HERO
       ===================================================== */}
 
-      <section className="relative overflow-hidden rounded-[22px] border border-white/[0.07] bg-[linear-gradient(135deg,rgba(18,23,31,.94),rgba(9,13,18,.95))] px-6 py-6 shadow-[0_18px_60px_rgba(0,0,0,.16)]">
+      <section className="relative overflow-hidden rounded-[22px] border border-white/[0.07] bg-[linear-gradient(135deg,rgba(18,23,31,.95),rgba(9,13,18,.96))] px-6 py-6 shadow-[0_18px_60px_rgba(0,0,0,.16)]">
 
         <div className="pointer-events-none absolute -right-24 -top-28 h-64 w-64 rounded-full bg-emerald-500/[0.045] blur-3xl" />
 
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="relative">
 
-          <div>
+          <Link
+            href="/admin/leads"
+            className="text-[10px] font-medium text-zinc-600 transition hover:text-zinc-300"
+          >
+            ← Back to Lead workspace
+          </Link>
 
-            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-400">
-              Revenue Pipeline
-            </div>
 
-            <h1 className="mt-3 text-[32px] font-semibold tracking-[-0.045em] text-white md:text-[38px]">
-              Lead workspace
-            </h1>
+          <div className="mt-5 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
 
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
-              Prioritize carrier conversations,
-              manage outreach and move interested
-              operators from first touch to client.
-            </p>
+            <div className="min-w-0">
 
-          </div>
+              <div className="flex flex-wrap items-center gap-2">
 
-          <div className="flex flex-wrap gap-2">
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${statusClasses(
+                    lead.status,
+                  )}`}
+                >
+                  {prettyStatus(
+                    lead.status,
+                  )}
+                </span>
 
-            <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] px-4 py-3">
 
-              <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
-                Matching
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${sourceClasses(
+                    lead.source,
+                  )}`}
+                >
+                  {sourceLabel(
+                    lead.source,
+                  )}
+                </span>
+
+
+                {replyNeedsAttention ? (
+                  <span className="rounded-full border border-amber-500/20 bg-amber-500/[0.07] px-2.5 py-1 text-[9px] font-semibold text-amber-300">
+                    Reply needs attention
+                  </span>
+                ) : null}
+
               </div>
 
-              <div className="mt-1 text-xl font-semibold text-white">
-                {total.toLocaleString()}
+
+              <h1 className="mt-4 text-[30px] font-semibold tracking-[-0.045em] text-white md:text-[38px]">
+                {displayName}
+              </h1>
+
+
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-600">
+
+                <span>
+                  {contactName}
+                </span>
+
+                <span>
+                  •
+                </span>
+
+                <span>
+                  DOT{" "}
+                  {lead.carrier_dot_number ??
+                    "—"}
+                </span>
+
+                {lead.mc_number ? (
+                  <>
+                    <span>
+                      •
+                    </span>
+
+                    <span>
+                      {lead.mc_number}
+                    </span>
+                  </>
+                ) : null}
+
+                {location !==
+                "—" ? (
+                  <>
+                    <span>
+                      •
+                    </span>
+
+                    <span>
+                      {location}
+                    </span>
+                  </>
+                ) : null}
+
               </div>
 
             </div>
 
-            <Link
-              href="/admin/leads?status=interested&sort=reply"
-              className="inline-flex h-[54px] items-center rounded-xl bg-white px-5 text-[11px] font-semibold text-black hover:bg-zinc-200"
-            >
-              Hot opportunities
-              <span className="ml-2">
-                →
-              </span>
-            </Link>
+
+            <div className="flex flex-wrap gap-2">
+
+              {lead.carrier_dot_number ? (
+                <Link
+                  href={`/admin/carriers/${lead.carrier_dot_number}`}
+                  className="inline-flex h-10 items-center rounded-xl border border-white/[0.08] bg-white/[0.025] px-4 text-[10px] font-semibold text-zinc-300 transition hover:bg-white/[0.05]"
+                >
+                  Carrier intelligence
+                </Link>
+              ) : null}
+
+
+              {lead.has_replied ? (
+                <Link
+                  href="/admin/replies?handling=open"
+                  className="inline-flex h-10 items-center rounded-xl border border-amber-500/20 bg-amber-500/[0.07] px-4 text-[10px] font-semibold text-amber-300 transition hover:bg-amber-500/[0.11]"
+                >
+                  Open Inbox
+                </Link>
+              ) : null}
+
+
+              {onboarding ? (
+                <Link
+                  href={`/admin/onboarding/${onboarding.id}/documents`}
+                  className="inline-flex h-10 items-center rounded-xl border border-violet-500/20 bg-violet-500/[0.07] px-4 text-[10px] font-semibold text-violet-300 transition hover:bg-violet-500/[0.11]"
+                >
+                  Document Vault
+                </Link>
+              ) : onboardingEligible ? (
+                <Link
+                  href={`/admin/onboarding/new?lead=${lead.id}`}
+                  className="inline-flex h-10 items-center rounded-xl border border-emerald-500/20 bg-emerald-500/[0.07] px-4 text-[10px] font-semibold text-emerald-300 transition hover:bg-emerald-500/[0.11]"
+                >
+                  Start Onboarding
+                </Link>
+              ) : null}
+
+
+              {manualEmailAllowed ? (
+                <a
+                  href={`mailto:${lead.email}`}
+                  className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-[10px] font-semibold text-black transition hover:bg-zinc-200"
+                >
+                  Send Manual Email
+                </a>
+              ) : null}
+
+            </div>
 
           </div>
 
@@ -1371,1146 +1969,1351 @@ export default async function LeadsPage({
 
       </section>
 
+
       {/* =====================================================
-          PAGE SNAPSHOT
+          KPI STRIP
       ===================================================== */}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
 
-        <Link
-          href="/admin/leads?status=interested&sort=reply"
-          className="rounded-[16px] border border-white/[0.07] bg-white/[0.022] p-4 hover:border-emerald-500/20 hover:bg-white/[0.035]"
-        >
-          <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
-            Interested
-          </div>
+        <MetricCard
+          label="Pipeline"
+          value={
+            <span className="text-zinc-100">
+              {prettyStatus(
+                lead.status,
+              )}
+            </span>
+          }
+          detail={
+            `Created ${formatDate(
+              lead.created_at,
+            )}`
+          }
+        />
 
-          <div className="mt-3 text-2xl font-semibold text-emerald-300">
-            {interestedOnPage}
-          </div>
 
-          <div className="mt-1 text-[9px] text-zinc-700">
-            Visible on this page
-          </div>
-        </Link>
+        <MetricCard
+          label="Replies"
+          value={
+            <span
+              className={
+                lead.has_replied
+                  ? "text-emerald-300"
+                  : "text-zinc-300"
+              }
+            >
+              {lead.reply_count ??
+                0}
+            </span>
+          }
+          detail={
+            latestClassification
+              ? prettyStatus(
+                  latestClassification,
+                )
+              : lead.has_replied
+                ? "Carrier replied"
+                : "No reply yet"
+          }
+        />
 
-        <Link
-          href="/admin/leads?reply=attention&sort=reply"
-          className="rounded-[16px] border border-white/[0.07] bg-white/[0.022] p-4 hover:border-amber-500/20 hover:bg-white/[0.035]"
-        >
-          <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
-            Carrier replies
-          </div>
 
-          <div className="mt-3 text-2xl font-semibold text-amber-300">
-            {repliedOnPage}
-          </div>
+        <MetricCard
+          label="Sequence"
+          value={
+            <span
+              className={
+                enrollment?.status ===
+                "active"
+                  ? "text-emerald-300"
+                  : "text-zinc-200"
+              }
+            >
+              {enrollment
+                ? prettyStatus(
+                    enrollment.status,
+                  )
+                : "Not enrolled"}
+            </span>
+          }
+          detail={
+            enrollment
+              ? `Step ${enrollment.current_step} • Next ${formatDate(
+                  enrollment.next_send_at,
+                )}`
+              : automationBlockReason ||
+                "Eligible state shown below"
+          }
+        />
 
-          <div className="mt-1 text-[9px] text-zinc-700">
-            Conversation activity
-          </div>
-        </Link>
 
-        <div className="rounded-[16px] border border-white/[0.07] bg-white/[0.022] p-4">
+        <MetricCard
+          label="Carrier Score"
+          value={
+            carrier?.lead_score !==
+              null &&
+            carrier?.lead_score !==
+              undefined ? (
+              <span
+                className={
+                  carrier.lead_score >=
+                  80
+                    ? "text-emerald-300"
+                    : carrier.lead_score >=
+                        60
+                      ? "text-amber-300"
+                      : "text-zinc-300"
+                }
+              >
+                {carrier.lead_score}
+                /100
+              </span>
+            ) : (
+              "—"
+            )
+          }
+          detail={
+            carrier?.dispatcher_probability !==
+              null &&
+            carrier?.dispatcher_probability !==
+              undefined
+              ? `${carrier.dispatcher_probability}% dispatcher probability`
+              : "Carrier scoring unavailable"
+          }
+        />
 
-          <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
-            Sequence ready
-          </div>
 
-          <div className="mt-3 text-2xl font-semibold text-blue-300">
-            {safeSequenceOnPage}
-          </div>
-
-          <div className="mt-1 text-[9px] text-zinc-700">
-            Safe to enroll on page
-          </div>
-
-        </div>
-
-        <Link
-          href="/admin/replies?handling=open"
-          className="rounded-[16px] border border-white/[0.07] bg-white/[0.022] p-4 hover:border-blue-500/20 hover:bg-white/[0.035]"
-        >
-          <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
-            Inbox
-          </div>
-
-          <div className="mt-3 text-lg font-semibold text-zinc-200">
-            Review replies
-          </div>
-
-          <div className="mt-2 text-[9px] text-blue-400">
-            Open carrier inbox →
-          </div>
-        </Link>
+        <MetricCard
+          label="Next Action"
+          value={
+            <span
+              className={
+                replyNeedsAttention
+                  ? "text-amber-300"
+                  : "text-zinc-200"
+              }
+            >
+              {nextAction}
+            </span>
+          }
+          detail={
+            nextTask?.due_at
+              ? `Due ${formatDate(
+                  nextTask.due_at,
+                )}`
+              : `${openTasks.length} open task${
+                  openTasks.length ===
+                  1
+                    ? ""
+                    : "s"
+                }`
+          }
+        />
 
       </div>
 
+
       {/* =====================================================
-          QUICK VIEWS
+          MAIN CRM GRID
       ===================================================== */}
 
-      <section className="flex flex-wrap items-center gap-2">
+      <div className="grid gap-5 2xl:grid-cols-[330px_minmax(0,1fr)]">
 
-        <span className="mr-1 text-[9px] font-semibold uppercase tracking-[0.13em] text-zinc-600">
-          Views
-        </span>
+        {/* ===================================================
+            LEFT RAIL
+        =================================================== */}
 
-        <Link
-          href="/admin/leads?status=interested&sort=reply"
-          className="rounded-full border border-emerald-500/15 bg-emerald-500/[0.065] px-3 py-1.5 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-500/[0.1]"
-        >
-          Interested
-        </Link>
+        <aside className="space-y-5">
 
-        <Link
-          href="/admin/leads?reply=attention&sort=reply"
-          className="rounded-full border border-amber-500/15 bg-amber-500/[0.055] px-3 py-1.5 text-[10px] font-medium text-amber-300 hover:bg-amber-500/[0.09]"
-        >
-          Needs attention
-        </Link>
+          {/* CONTACT */}
 
-        <Link
-          href="/admin/leads?reply=replied&sort=reply"
-          className="rounded-full border border-white/[0.075] bg-white/[0.025] px-3 py-1.5 text-[10px] text-zinc-400 hover:bg-white/[0.05]"
-        >
-          Replied
-        </Link>
-
-        <Link
-          href="/admin/leads?status=new"
-          className="rounded-full border border-white/[0.075] bg-white/[0.025] px-3 py-1.5 text-[10px] text-zinc-400 hover:bg-white/[0.05]"
-        >
-          New leads
-        </Link>
-
-        <Link
-          href="/admin/leads?status=client"
-          className="rounded-full border border-violet-500/15 bg-violet-500/[0.055] px-3 py-1.5 text-[10px] text-violet-300 hover:bg-violet-500/[0.09]"
-        >
-          Clients
-        </Link>
-
-        <Link
-          href="/admin/leads?sequence=active"
-          className="rounded-full border border-blue-500/15 bg-blue-500/[0.055] px-3 py-1.5 text-[10px] text-blue-300 hover:bg-blue-500/[0.09]"
-        >
-          Active sequences
-        </Link>
-
-        {activeFilterCount > 0 ? (
-          <Link
-            href="/admin/leads"
-            className="rounded-full border border-white/[0.075] px-3 py-1.5 text-[10px] text-zinc-500 hover:bg-white/[0.035]"
+          <Panel
+            title="Lead identity"
+            subtitle="Primary CRM and carrier contact details."
           >
-            Clear filters
-          </Link>
-        ) : null}
-
-      </section>
-
-      {/* =====================================================
-          FILTER PANEL
-      ===================================================== */}
-
-      <form
-        method="GET"
-        className="rounded-[18px] border border-white/[0.07] bg-white/[0.022] p-4"
-      >
-
-        <div className="mb-4 flex items-center justify-between">
-
-          <div className="flex items-center gap-2">
-
-            <span className="text-zinc-600">
-              <FilterIcon />
-            </span>
 
             <div>
-              <div className="text-[11px] font-semibold text-zinc-300">
-                Pipeline filters
-              </div>
 
-              <div className="mt-0.5 text-[9px] text-zinc-700">
-                Find the exact conversations that need action.
-              </div>
+              <InfoRow
+                label="Contact"
+                value={
+                  contactName
+                }
+              />
+
+
+              <InfoRow
+                label="Company"
+                value={
+                  displayName
+                }
+              />
+
+
+              <InfoRow
+                label="Email"
+                value={
+                  lead.email ? (
+                    <span className="break-all">
+                      {lead.email}
+                    </span>
+                  ) : (
+                    "—"
+                  )
+                }
+              />
+
+
+              <InfoRow
+                label="Phone"
+                value={
+                  lead.phone ||
+                  carrier?.phone ||
+                  "—"
+                }
+              />
+
+
+              <InfoRow
+                label="USDOT"
+                value={
+                  lead.carrier_dot_number ??
+                  "—"
+                }
+              />
+
+
+              <InfoRow
+                label="MC"
+                value={
+                  lead.mc_number ||
+                  carrier?.mc_number ||
+                  "—"
+                }
+              />
+
+
+              <InfoRow
+                label="Location"
+                value={
+                  location
+                }
+              />
+
+
+              <InfoRow
+                label="Source"
+                value={
+                  sourceLabel(
+                    lead.source,
+                  )
+                }
+              />
+
             </div>
 
-          </div>
 
-          {activeFilterCount > 0 ? (
-            <span className="rounded-full border border-blue-500/15 bg-blue-500/[0.06] px-2.5 py-1 text-[9px] font-semibold text-blue-300">
-              {activeFilterCount} active
-            </span>
-          ) : null}
+            {lead.notes ? (
+              <div className="mt-4 rounded-xl border border-white/[0.06] bg-black/20 p-3">
 
-        </div>
+                <div className="text-[8px] font-semibold uppercase tracking-[0.11em] text-zinc-700">
+                  CRM Notes
+                </div>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                <p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-zinc-400">
+                  {lead.notes}
+                </p>
 
-          <div className="relative md:col-span-2 xl:col-span-2">
+              </div>
+            ) : null}
 
-            <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.11em] text-zinc-600">
-              Search
-            </label>
+          </Panel>
 
-            <span className="pointer-events-none absolute bottom-[12px] left-3 text-zinc-600">
-              <SearchIcon />
-            </span>
 
-            <input
-              name="q"
-              defaultValue={search}
-              placeholder="Company, contact, DOT, MC, email, phone..."
-              className="w-full rounded-xl border border-white/[0.08] bg-black/25 py-2.5 pl-10 pr-3 text-[11px] text-zinc-200 outline-none placeholder:text-zinc-700"
+          {/* EMAIL SAFETY */}
+
+          <Panel
+            title="Email safety"
+            subtitle="Matches the safeguards used by SlateLane automation."
+          >
+
+            <div
+              className={`mb-4 rounded-xl border p-3 ${
+                automationBlockReason
+                  ? lead.has_replied &&
+                    !lead.email_opt_out &&
+                    !lead.email_bounced &&
+                    !lead.email_complained
+                    ? "border-amber-500/15 bg-amber-500/[0.045]"
+                    : "border-red-500/15 bg-red-500/[0.045]"
+                  : "border-emerald-500/15 bg-emerald-500/[0.045]"
+              }`}
+            >
+
+              <div
+                className={`text-[10px] font-semibold ${
+                  automationBlockReason
+                    ? lead.has_replied &&
+                      !lead.email_opt_out &&
+                      !lead.email_bounced &&
+                      !lead.email_complained
+                      ? "text-amber-300"
+                      : "text-red-300"
+                    : "text-emerald-300"
+                }`}
+              >
+                {automationBlockReason
+                  ? "Automation blocked"
+                  : "Automation eligible"}
+              </div>
+
+              <div className="mt-1 text-[9px] leading-4 text-zinc-600">
+                {automationBlockReason ||
+                  "No lead-level safety block is currently present."}
+              </div>
+
+            </div>
+
+
+            <InfoRow
+              label="Replied"
+              value={
+                <span
+                  className={
+                    lead.has_replied
+                      ? "text-emerald-300"
+                      : "text-zinc-500"
+                  }
+                >
+                  {lead.has_replied
+                    ? "Yes"
+                    : "No"}
+                </span>
+              }
             />
 
-          </div>
 
-          <div>
-
-            <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.11em] text-zinc-600">
-              Status
-            </label>
-
-            <select
-              name="status"
-              defaultValue={status}
-              className="w-full rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2.5 text-[11px] text-zinc-300 outline-none"
-            >
-              <option value="">
-                All statuses
-              </option>
-
-              {STATUSES.map(
-                (item) => (
-                  <option
-                    key={item}
-                    value={item}
-                  >
-                    {prettyStatus(item)}
-                  </option>
-                ),
-              )}
-            </select>
-
-          </div>
-
-          <div>
-
-            <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.11em] text-zinc-600">
-              Source
-            </label>
-
-            <select
-              name="source"
-              defaultValue={source}
-              className="w-full rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2.5 text-[11px] text-zinc-300 outline-none"
-            >
-              <option value="">
-                All sources
-              </option>
-
-              <option value="fmcsa">
-                All FMCSA
-              </option>
-
-              <option value="automated">
-                Automated
-              </option>
-
-              <option value="pilot">
-                Pilot
-              </option>
-
-              <option value="website">
-                Website
-              </option>
-
-              <option value="email_test">
-                Test
-              </option>
-            </select>
-
-          </div>
-
-          <div>
-
-            <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.11em] text-zinc-600">
-              Reply
-            </label>
-
-            <select
-              name="reply"
-              defaultValue={reply}
-              className="w-full rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2.5 text-[11px] text-zinc-300 outline-none"
-            >
-              <option value="">
-                Any reply state
-              </option>
-
-              <option value="attention">
-                Needs attention
-              </option>
-
-              <option value="replied">
-                Has replied
-              </option>
-
-              <option value="none">
-                No reply
-              </option>
-            </select>
-
-          </div>
-
-          <div>
-
-            <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.11em] text-zinc-600">
-              Sort
-            </label>
-
-            <select
-              name="sort"
-              defaultValue={sort}
-              className="w-full rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2.5 text-[11px] text-zinc-300 outline-none"
-            >
-              <option value="recent">
-                Newest lead
-              </option>
-
-              <option value="reply">
-                Latest reply
-              </option>
-
-              <option value="updated">
-                Recently updated
-              </option>
-
-              <option value="company">
-                Company name
-              </option>
-            </select>
-
-          </div>
-
-        </div>
-
-        <div className="mt-4 flex flex-col gap-3 border-t border-white/[0.055] pt-4 sm:flex-row sm:items-center sm:justify-between">
-
-          <div className="text-[9px] text-zinc-700">
-            Search and filters are server-side for consistent results.
-          </div>
-
-          <div className="flex gap-2">
-
-            <Link
-              href="/admin/leads"
-              className="inline-flex h-9 items-center rounded-lg border border-white/[0.075] px-3 text-[10px] font-medium text-zinc-500 hover:bg-white/[0.035]"
-            >
-              Reset
-            </Link>
-
-            <button
-              type="submit"
-              className="inline-flex h-9 items-center rounded-lg bg-white px-4 text-[10px] font-semibold text-black hover:bg-zinc-200"
-            >
-              Apply filters
-            </button>
-
-          </div>
-
-        </div>
-
-      </form>
-
-      {/* =====================================================
-          RESULTS
-      ===================================================== */}
-
-      <section className="overflow-hidden rounded-[20px] border border-white/[0.07] bg-white/[0.018]">
-
-        <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-
-          <div>
-
-            <h2 className="text-[13px] font-semibold text-zinc-200">
-              Sales pipeline
-            </h2>
-
-            <p className="mt-1 text-[10px] text-zinc-600">
-              Showing{" "}
-              <span className="text-zinc-400">
-                {firstResult.toLocaleString()}–{lastResult.toLocaleString()}
-              </span>{" "}
-              of{" "}
-              <span className="text-zinc-400">
-                {total.toLocaleString()}
-              </span>{" "}
-              leads
-            </p>
-
-          </div>
-
-          <div className="text-[9px] text-zinc-700">
-            Page {page} of {totalPages}
-          </div>
-
-        </div>
-
-        {error ? (
-          <div className="border-b border-red-500/10 bg-red-500/[0.04] px-5 py-4 text-[11px] text-red-300">
-            Could not load leads: {error.message}
-          </div>
-        ) : null}
-
-        {/* DESKTOP */}
-
-        <div className="hidden overflow-x-auto xl:block">
-
-          <table className="min-w-full">
-
-            <thead>
-
-              <tr className="border-b border-white/[0.055]">
-
-                <th className="px-5 py-3 text-left">
-                  Lead
-                </th>
-
-                <th className="px-4 py-3 text-left">
-                  Contact
-                </th>
-
-                <th className="px-4 py-3 text-left">
-                  Status
-                </th>
-
-                <th className="px-4 py-3 text-left">
-                  Conversation
-                </th>
-
-                <th className="px-4 py-3 text-left">
-                  Sequence
-                </th>
-
-                <th className="px-4 py-3 text-left">
-                  Source
-                </th>
-
-                <th className="px-4 py-3 text-left">
-                  Actions
-                </th>
-
-                <th className="px-5 py-3 text-right">
-                  Open
-                </th>
-
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {visibleLeads.map(
-                (lead) => {
-                  const enrollment =
-                    enrollmentMap.get(
-                      lead.id,
-                    );
-
-                  const displayName =
-                    lead.company_name ||
-                    lead.name ||
-                    "Unnamed Lead";
-
-                  const unsafe =
-                    !lead.email ||
-                    Boolean(
-                      lead.email_opt_out,
-                    ) ||
-                    Boolean(
-                      lead.email_bounced,
-                    ) ||
-                    Boolean(
-                      lead.email_complained,
-                    ) ||
-                    Boolean(
-                      lead.has_replied,
-                    ) ||
-                    lead.status ===
-                      "client" ||
-                    lead.status ===
-                      "not_interested";
-
-                  const canStart =
-                    !unsafe &&
-                    !enrollment;
-
-                  return (
-                    <tr
-                      key={lead.id}
-                      className={`group border-b border-white/[0.045] transition hover:bg-white/[0.018] ${
-                        lead.reply_requires_attention
-                          ? "bg-amber-500/[0.018]"
-                          : ""
-                      }`}
-                    >
-
-                      <td className="px-5 py-4">
-
-                        <div className="flex min-w-[235px] items-center gap-3">
-
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.075] bg-white/[0.03] text-[9px] font-bold text-zinc-400">
-                            {initials(
-                              lead.company_name,
-                              lead.name,
-                            )}
-                          </div>
-
-                          <div className="min-w-0">
-
-                            <Link
-                              href={`/admin/leads/${lead.id}`}
-                              className="block max-w-[240px] truncate text-[11px] font-semibold text-zinc-200 hover:text-white"
-                            >
-                              {displayName}
-                            </Link>
-
-                            <div className="mt-1 flex items-center gap-2 text-[9px] text-zinc-700">
-
-                              {lead.name &&
-                              lead.company_name ? (
-                                <>
-                                  <span className="max-w-[115px] truncate">
-                                    {lead.name}
-                                  </span>
-
-                                  <span>
-                                    •
-                                  </span>
-                                </>
-                              ) : null}
-
-                              <span>
-                                DOT{" "}
-                                {lead.carrier_dot_number ??
-                                  "—"}
-                              </span>
-
-                              {lead.mc_number ? (
-                                <>
-                                  <span>
-                                    •
-                                  </span>
-
-                                  <span>
-                                    {lead.mc_number}
-                                  </span>
-                                </>
-                              ) : null}
-
-                            </div>
-
-                          </div>
-
-                        </div>
-
-                      </td>
-
-                      <td className="px-4 py-4">
-
-                        <div className="min-w-[185px]">
-
-                          <div className="max-w-[210px] truncate text-[10px] text-zinc-400">
-                            {lead.email ||
-                              "No email"}
-                          </div>
-
-                          <div className="mt-1 text-[9px] text-zinc-700">
-                            {lead.phone ||
-                              "No phone"}
-                          </div>
-
-                          {(lead.email_opt_out ||
-                            lead.email_bounced ||
-                            lead.email_complained) ? (
-                            <div className="mt-2 flex gap-1">
-
-                              {lead.email_opt_out ? (
-                                <span className="rounded border border-red-500/15 bg-red-500/[0.06] px-1.5 py-0.5 text-[7px] font-semibold text-red-300">
-                                  OPT-OUT
-                                </span>
-                              ) : null}
-
-                              {lead.email_bounced ? (
-                                <span className="rounded border border-red-500/15 bg-red-500/[0.06] px-1.5 py-0.5 text-[7px] font-semibold text-red-300">
-                                  BOUNCED
-                                </span>
-                              ) : null}
-
-                              {lead.email_complained ? (
-                                <span className="rounded border border-red-500/15 bg-red-500/[0.06] px-1.5 py-0.5 text-[7px] font-semibold text-red-300">
-                                  COMPLAINT
-                                </span>
-                              ) : null}
-
-                            </div>
-                          ) : null}
-
-                        </div>
-
-                      </td>
-
-                      <td className="px-4 py-4">
-
-                        <form action={updateStatus}>
-
-                          <input
-                            type="hidden"
-                            name="id"
-                            value={lead.id}
-                          />
-
-                          <select
-                            name="status"
-                            defaultValue={
-                              lead.status ||
-                              "new"
-                            }
-                            aria-label={`Status for ${displayName}`}
-                            className={`min-w-[125px] rounded-lg border px-2 py-2 text-[9px] font-semibold outline-none ${statusClass(
-                              lead.status,
-                            )}`}
-                          >
-                            {STATUSES.map(
-                              (item) => (
-                                <option
-                                  key={item}
-                                  value={item}
-                                >
-                                  {prettyStatus(
-                                    item,
-                                  )}
-                                </option>
-                              ),
-                            )}
-                          </select>
-
-                          <button
-                            type="submit"
-                            className="ml-1 rounded-lg border border-white/[0.07] px-2 py-2 text-[8px] text-zinc-600 hover:bg-white/[0.04] hover:text-zinc-300"
-                          >
-                            Save
-                          </button>
-
-                        </form>
-
-                      </td>
-
-                      <td className="px-4 py-4">
-
-                        <div className="min-w-[130px]">
-
-                          {lead.has_replied ? (
-                            <>
-                              <div className="flex flex-wrap items-center gap-1.5">
-
-                                <span
-                                  className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${classificationClass(
-                                    lead.last_reply_classification,
-                                  )}`}
-                                >
-                                  {classificationLabel(
-                                    lead.last_reply_classification,
-                                  )}
-                                </span>
-
-                                {lead.reply_requires_attention ? (
-                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,.4)]" />
-                                ) : null}
-
-                              </div>
-
-                              <div className="mt-1.5 text-[8px] text-zinc-700">
-                                {lead.reply_count ??
-                                  1}
-                                {" "}
-                                reply
-                                {(lead.reply_count ??
-                                  1) !== 1
-                                  ? "ies"
-                                  : ""}
-                                {" • "}
-                                {formatDate(
-                                  lead.last_reply_at,
-                                )}
-                              </div>
-                            </>
-                          ) : (
-                            <span className="text-[9px] text-zinc-700">
-                              No reply
-                            </span>
-                          )}
-
-                        </div>
-
-                      </td>
-
-                      <td className="px-4 py-4">
-
-                        <div className="min-w-[140px]">
-
-                          {enrollment ? (
-                            <>
-                              <span
-                                className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${sequenceClass(
-                                  enrollment.status,
-                                )}`}
-                              >
-                                {prettyStatus(
-                                  enrollment.status,
-                                )}
-                                {" "}
-                                • Step{" "}
-                                {enrollment.current_step}
-                              </span>
-
-                              <div className="mt-1.5 text-[8px] text-zinc-700">
-                                Next:{" "}
-                                {formatDate(
-                                  enrollment.next_send_at,
-                                )}
-                              </div>
-                            </>
-                          ) : (
-                            <span className="text-[9px] text-zinc-700">
-                              Not enrolled
-                            </span>
-                          )}
-
-                        </div>
-
-                      </td>
-
-                      <td className="px-4 py-4">
-
-                        <div className="min-w-[90px]">
-
-                          <span
-                            className={`rounded-full border px-2 py-1 text-[8px] font-semibold ${sourceClass(
-                              lead.source,
-                            )}`}
-                          >
-                            {sourceLabel(
-                              lead.source,
-                            )}
-                          </span>
-
-                          <div className="mt-2 text-[8px] text-zinc-700">
-                            {formatDate(
-                              lead.created_at,
-                            )}
-                          </div>
-
-                        </div>
-
-                      </td>
-
-                      <td className="px-4 py-4">
-
-                        <div className="min-w-[110px]">
-
-                          {canStart ? (
-                            <form action={startSequence}>
-
-                              <input
-                                type="hidden"
-                                name="lead_id"
-                                value={lead.id}
-                              />
-
-                              <button
-                                type="submit"
-                                className="rounded-lg border border-blue-500/20 bg-blue-500/[0.07] px-2.5 py-2 text-[8px] font-semibold text-blue-300 hover:bg-blue-500/[0.12]"
-                              >
-                                Start sequence
-                              </button>
-
-                            </form>
-                          ) : enrollment ? (
-                            <span className="text-[8px] text-zinc-600">
-                              Sequence tracked
-                            </span>
-                          ) : lead.has_replied ? (
-                            <span className="text-[8px] font-medium text-amber-400">
-                              Reply first
-                            </span>
-                          ) : (
-                            <span className="text-[8px] text-zinc-700">
-                              Not eligible
-                            </span>
-                          )}
-
-                        </div>
-
-                      </td>
-
-                      <td className="px-5 py-4 text-right">
-
-                        <Link
-                          href={`/admin/leads/${lead.id}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.025] text-zinc-600 transition hover:border-white/[0.13] hover:bg-white/[0.05] hover:text-zinc-200"
-                          aria-label={`Open ${displayName}`}
-                        >
-                          <ArrowIcon />
-                        </Link>
-
-                      </td>
-
-                    </tr>
-                  );
-                },
-              )}
-
-            </tbody>
-
-          </table>
-
-        </div>
-
-        {/* TABLET / MOBILE */}
-
-        <div className="divide-y divide-white/[0.05] xl:hidden">
-
-          {visibleLeads.map(
-            (lead) => {
-              const enrollment =
-                enrollmentMap.get(
-                  lead.id,
-                );
-
-              const displayName =
-                lead.company_name ||
-                lead.name ||
-                "Unnamed Lead";
-
-              const unsafe =
-                !lead.email ||
-                Boolean(
-                  lead.email_opt_out,
-                ) ||
-                Boolean(
-                  lead.email_bounced,
-                ) ||
-                Boolean(
-                  lead.email_complained,
-                ) ||
-                Boolean(
-                  lead.has_replied,
-                ) ||
-                lead.status ===
-                  "client" ||
-                lead.status ===
-                  "not_interested";
-
-              const canStart =
-                !unsafe &&
-                !enrollment;
-
-              return (
-                <div
-                  key={lead.id}
-                  className={`p-4 ${
-                    lead.reply_requires_attention
-                      ? "bg-amber-500/[0.018]"
-                      : ""
-                  }`}
+            <InfoRow
+              label="Opt-out"
+              value={
+                <span
+                  className={
+                    lead.email_opt_out
+                      ? "text-red-300"
+                      : "text-zinc-500"
+                  }
                 >
+                  {lead.email_opt_out
+                    ? "Yes"
+                    : "No"}
+                </span>
+              }
+            />
 
-                  <div className="flex items-start gap-3">
 
-                    <Link
-                      href={`/admin/leads/${lead.id}`}
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.075] bg-white/[0.03] text-[9px] font-bold text-zinc-400"
+            <InfoRow
+              label="Bounce"
+              value={
+                <span
+                  className={
+                    lead.email_bounced
+                      ? "text-red-300"
+                      : "text-zinc-500"
+                  }
+                >
+                  {lead.email_bounced
+                    ? "Yes"
+                    : "No"}
+                </span>
+              }
+            />
+
+
+            <InfoRow
+              label="Complaint"
+              value={
+                <span
+                  className={
+                    lead.email_complained
+                      ? "text-red-300"
+                      : "text-zinc-500"
+                  }
+                >
+                  {lead.email_complained
+                    ? "Yes"
+                    : "No"}
+                </span>
+              }
+            />
+
+
+            <InfoRow
+              label="Last email"
+              value={
+                formatDate(
+                  lead.last_email_sent_at,
+                )
+              }
+            />
+
+
+            <InfoRow
+              label="Last reply"
+              value={
+                formatDate(
+                  lead.last_reply_at,
+                )
+              }
+            />
+
+          </Panel>
+
+
+          {/* CARRIER INTELLIGENCE */}
+
+          <Panel
+            title="Carrier intelligence"
+            subtitle={
+              carrier
+                ? "FMCSA and SlateLane carrier intelligence."
+                : "No linked carrier record was found."
+            }
+            action={
+              lead.carrier_dot_number ? (
+                <Link
+                  href={`/admin/carriers/${lead.carrier_dot_number}`}
+                  className="text-[9px] font-medium text-blue-400 hover:text-blue-300"
+                >
+                  Full profile →
+                </Link>
+              ) : null
+            }
+          >
+
+            {carrier ? (
+              <div>
+
+                <InfoRow
+                  label="Lead score"
+                  value={
+                    carrier.lead_score !==
+                      null &&
+                    carrier.lead_score !==
+                      undefined
+                      ? `${carrier.lead_score}/100`
+                      : "—"
+                  }
+                />
+
+
+                <InfoRow
+                  label="Probability"
+                  value={
+                    carrier.dispatcher_probability !==
+                      null &&
+                    carrier.dispatcher_probability !==
+                      undefined
+                      ? `${carrier.dispatcher_probability}%`
+                      : "—"
+                  }
+                />
+
+
+                <InfoRow
+                  label="Power units"
+                  value={
+                    formatNumber(
+                      carrier.power_units,
+                    )
+                  }
+                />
+
+
+                <InfoRow
+                  label="Drivers"
+                  value={
+                    formatNumber(
+                      carrier.drivers,
+                    )
+                  }
+                />
+
+
+                <InfoRow
+                  label="Authority"
+                  value={
+                    prettyStatus(
+                      carrier.authority_status,
+                    )
+                  }
+                />
+
+
+                <InfoRow
+                  label="Authority age"
+                  value={
+                    carrier.authority_age_days !==
+                      null &&
+                    carrier.authority_age_days !==
+                      undefined
+                      ? `${formatNumber(
+                          carrier.authority_age_days,
+                        )} days`
+                      : "—"
+                  }
+                />
+
+
+                <InfoRow
+                  label="Safety"
+                  value={
+                    carrier.safety_rating ||
+                    "Not Rated"
+                  }
+                />
+
+
+                <div className="mt-4 border-t border-white/[0.05] pt-4">
+
+                  <div className="mb-3 text-[8px] font-semibold uppercase tracking-[0.11em] text-zinc-700">
+                    Email Intelligence
+                  </div>
+
+
+                  <div className="flex flex-wrap gap-2">
+
+                    <span
+                      className={`rounded-full border px-2 py-1 text-[8px] font-semibold ${healthClasses(
+                        carrier.email_verification_status,
+                      )}`}
                     >
-                      {initials(
-                        lead.company_name,
-                        lead.name,
+                      Verification:{" "}
+                      {prettyStatus(
+                        carrier.email_verification_status,
                       )}
-                    </Link>
+                    </span>
 
-                    <div className="min-w-0 flex-1">
 
-                      <div className="flex items-start justify-between gap-3">
+                    <span
+                      className={`rounded-full border px-2 py-1 text-[8px] font-semibold ${healthClasses(
+                        carrier.email_health_status,
+                      )}`}
+                    >
+                      Health:{" "}
+                      {prettyStatus(
+                        carrier.email_health_status,
+                      )}
+                    </span>
 
-                        <div className="min-w-0">
+                  </div>
 
-                          <Link
-                            href={`/admin/leads/${lead.id}`}
-                            className="block truncate text-[12px] font-semibold text-zinc-200"
-                          >
-                            {displayName}
-                          </Link>
 
-                          <div className="mt-1 text-[9px] text-zinc-700">
-                            DOT{" "}
-                            {lead.carrier_dot_number ??
-                              "—"}
-                            {lead.mc_number
-                              ? ` • ${lead.mc_number}`
-                              : ""}
-                          </div>
+                  {carrier.email_risk_score !==
+                    null &&
+                  carrier.email_risk_score !==
+                    undefined ? (
+                    <div className="mt-3 text-[9px] text-zinc-600">
+                      Risk score:{" "}
+                      <span className="text-zinc-400">
+                        {carrier.email_risk_score}
+                      </span>
+                    </div>
+                  ) : null}
 
-                        </div>
 
-                        <span
-                          className={`shrink-0 rounded-full border px-2 py-0.5 text-[8px] font-semibold ${statusClass(
-                            lead.status,
-                          )}`}
-                        >
-                          {prettyStatus(
-                            lead.status,
-                          )}
-                        </span>
+                  {carrier.email_verification_reason ? (
+                    <p className="mt-2 text-[9px] leading-4 text-zinc-600">
+                      {carrier.email_verification_reason}
+                    </p>
+                  ) : null}
 
-                      </div>
+                </div>
 
-                      <div className="mt-3 grid grid-cols-2 gap-3">
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/[0.055] bg-black/15 p-4 text-[10px] leading-5 text-zinc-600">
+                This lead does not currently have a matching carrier intelligence record.
+              </div>
+            )}
 
-                        <div>
-                          <div className="text-[8px] uppercase tracking-wide text-zinc-700">
-                            Contact
-                          </div>
+          </Panel>
 
-                          <div className="mt-1 truncate text-[9px] text-zinc-400">
-                            {lead.email ||
-                              "No email"}
-                          </div>
 
-                          <div className="mt-0.5 text-[9px] text-zinc-600">
-                            {lead.phone ||
-                              "No phone"}
-                          </div>
-                        </div>
+          {/* ONBOARDING */}
 
-                        <div>
-                          <div className="text-[8px] uppercase tracking-wide text-zinc-700">
-                            Sequence
-                          </div>
+          <Panel
+            title="Onboarding"
+            subtitle="Carrier conversion and broker-packet readiness."
+            action={
+              onboarding ? (
+                <Link
+                  href={`/admin/onboarding/${onboarding.id}/documents`}
+                  className="text-[9px] font-medium text-violet-400 hover:text-violet-300"
+                >
+                  Vault →
+                </Link>
+              ) : onboardingEligible ? (
+                <Link
+                  href={`/admin/onboarding/new?lead=${lead.id}`}
+                  className="text-[9px] font-medium text-emerald-400 hover:text-emerald-300"
+                >
+                  Start →
+                </Link>
+              ) : null
+            }
+          >
 
-                          <div className="mt-1 text-[9px] text-zinc-400">
-                            {enrollment
-                              ? `${prettyStatus(
-                                  enrollment.status,
-                                )} • Step ${enrollment.current_step}`
-                              : "Not enrolled"}
-                          </div>
-                        </div>
+            {onboarding ? (
+              <div>
 
-                      </div>
+                <InfoRow
+                  label="Status"
+                  value={
+                    prettyStatus(
+                      onboarding.status,
+                    )
+                  }
+                />
 
-                      <div className="mt-3 flex flex-wrap gap-1.5">
 
-                        <span
-                          className={`rounded-full border px-2 py-0.5 text-[8px] ${sourceClass(
-                            lead.source,
-                          )}`}
-                        >
-                          {sourceLabel(
-                            lead.source,
-                          )}
-                        </span>
+                <InfoRow
+                  label="Agreement"
+                  value={
+                    prettyStatus(
+                      onboarding.agreement_status,
+                    )
+                  }
+                />
 
-                        {lead.has_replied ? (
+
+                <InfoRow
+                  label="Signed"
+                  value={
+                    formatDate(
+                      onboarding.agreement_signed_at,
+                    )
+                  }
+                />
+
+
+                <InfoRow
+                  label="Documents"
+                  value={
+                    vaultStatus?.document_count ??
+                    "—"
+                  }
+                />
+
+
+                <InfoRow
+                  label="Broker packet"
+                  value={
+                    vaultStatus?.broker_packet_ready ? (
+                      <span className="font-semibold text-emerald-300">
+                        Ready
+                      </span>
+                    ) : (
+                      <span className="text-amber-300">
+                        Incomplete
+                      </span>
+                    )
+                  }
+                />
+
+
+                {Array.isArray(
+                  vaultStatus?.missing_documents,
+                ) &&
+                vaultStatus.missing_documents.length >
+                  0 ? (
+                  <div className="mt-4 rounded-xl border border-amber-500/15 bg-amber-500/[0.04] p-3">
+
+                    <div className="text-[8px] font-semibold uppercase tracking-[0.1em] text-amber-400">
+                      Missing documents
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+
+                      {vaultStatus.missing_documents.map(
+                        (
+                          document:
+                            string,
+                        ) => (
                           <span
-                            className={`rounded-full border px-2 py-0.5 text-[8px] ${classificationClass(
-                              lead.last_reply_classification,
-                            )}`}
+                            key={
+                              document
+                            }
+                            className="rounded-md border border-white/[0.06] bg-black/20 px-2 py-1 text-[8px] text-zinc-500"
                           >
-                            {classificationLabel(
-                              lead.last_reply_classification,
+                            {prettyStatus(
+                              document,
                             )}
                           </span>
-                        ) : null}
+                        ),
+                      )}
 
-                        {lead.reply_requires_attention ? (
-                          <span className="rounded-full border border-amber-500/15 bg-amber-500/[0.07] px-2 py-0.5 text-[8px] text-amber-300">
-                            Needs attention
-                          </span>
-                        ) : null}
+                    </div>
 
-                      </div>
+                  </div>
+                ) : null}
 
-                      <div className="mt-4 flex flex-wrap gap-2">
+              </div>
+            ) : (
+              <div>
 
-                        <form action={updateStatus}>
-                          <input
-                            type="hidden"
-                            name="id"
-                            value={lead.id}
-                          />
+                <div className="rounded-xl border border-white/[0.055] bg-black/15 p-4">
 
-                          <div className="flex">
+                  <div className="text-[10px] font-semibold text-zinc-300">
+                    Onboarding not started
+                  </div>
 
-                            <select
-                              name="status"
-                              defaultValue={
-                                lead.status ||
-                                "new"
-                              }
-                              className="rounded-l-lg border border-white/[0.08] bg-black/30 px-2 py-2 text-[9px] text-zinc-300 outline-none"
-                            >
-                              {STATUSES.map(
-                                (item) => (
-                                  <option
-                                    key={item}
-                                    value={item}
-                                  >
-                                    {prettyStatus(
-                                      item,
-                                    )}
-                                  </option>
-                                ),
-                              )}
-                            </select>
+                  <p className="mt-1.5 text-[9px] leading-4 text-zinc-600">
+                    {onboardingEligible
+                      ? "This lead is eligible to enter the existing SlateLane onboarding workflow."
+                      : "Move the lead to Interested, Follow Up, Meeting or Client before starting onboarding."}
+                  </p>
 
-                            <button
-                              type="submit"
-                              className="rounded-r-lg border border-l-0 border-white/[0.08] px-2 py-2 text-[8px] text-zinc-500"
-                            >
-                              Save
-                            </button>
+                </div>
 
-                          </div>
-                        </form>
+                {onboardingEligible ? (
+                  <Link
+                    href={`/admin/onboarding/new?lead=${lead.id}`}
+                    className="mt-3 inline-flex h-9 items-center rounded-lg border border-emerald-500/20 bg-emerald-500/[0.07] px-3 text-[9px] font-semibold text-emerald-300 hover:bg-emerald-500/[0.11]"
+                  >
+                    Start carrier onboarding
+                  </Link>
+                ) : null}
 
-                        {canStart ? (
-                          <form action={startSequence}>
+              </div>
+            )}
 
-                            <input
-                              type="hidden"
-                              name="lead_id"
-                              value={lead.id}
-                            />
+          </Panel>
 
-                            <button
-                              type="submit"
-                              className="rounded-lg border border-blue-500/20 bg-blue-500/[0.07] px-3 py-2 text-[8px] font-semibold text-blue-300"
-                            >
-                              Start sequence
-                            </button>
+        </aside>
 
-                          </form>
-                        ) : null}
 
-                        <Link
-                          href={`/admin/leads/${lead.id}`}
-                          className="inline-flex items-center rounded-lg border border-white/[0.075] px-3 py-2 text-[8px] font-semibold text-zinc-400"
-                        >
-                          Open →
-                        </Link>
+        {/* ===================================================
+            MAIN COLUMN
+        =================================================== */}
 
-                      </div>
+        <main className="min-w-0 space-y-5">
 
+          {/* NEXT ACTION / TASKS */}
+
+          <Panel
+            title="Next action"
+            subtitle="Open CRM work for this carrier."
+            action={
+              <Link
+                href="/admin/tasks"
+                className="text-[9px] font-medium text-blue-400 hover:text-blue-300"
+              >
+                Task center →
+              </Link>
+            }
+          >
+
+            {nextTask ? (
+              <div className="rounded-[15px] border border-white/[0.07] bg-black/20 p-4">
+
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+
+                  <div className="min-w-0">
+
+                    <div className="flex flex-wrap gap-2">
+
+                      <span
+                        className={`rounded-full border px-2 py-1 text-[8px] font-semibold ${priorityClasses(
+                          nextTask.priority,
+                        )}`}
+                      >
+                        {prettyStatus(
+                          nextTask.priority,
+                        )}
+                      </span>
+
+                      <span className="rounded-full border border-white/[0.07] bg-white/[0.025] px-2 py-1 text-[8px] font-medium text-zinc-500">
+                        {prettyStatus(
+                          nextTask.task_type,
+                        )}
+                      </span>
+
+                    </div>
+
+
+                    <h3 className="mt-3 text-[15px] font-semibold text-zinc-100">
+                      {nextTask.title}
+                    </h3>
+
+
+                    {nextTask.note ? (
+                      <p className="mt-2 max-w-3xl whitespace-pre-wrap text-[10px] leading-5 text-zinc-500">
+                        {nextTask.note}
+                      </p>
+                    ) : null}
+
+                  </div>
+
+
+                  <div className="shrink-0 text-left sm:text-right">
+
+                    <div className="text-[8px] font-semibold uppercase tracking-[0.1em] text-zinc-700">
+                      Due
+                    </div>
+
+                    <div className="mt-1 text-[10px] font-medium text-zinc-300">
+                      {formatDate(
+                        nextTask.due_at,
+                      )}
                     </div>
 
                   </div>
 
                 </div>
-              );
-            },
-          )}
 
-        </div>
+              </div>
+            ) : (
+              <div className="rounded-[15px] border border-white/[0.06] bg-black/15 p-4">
 
-        {visibleLeads.length ===
-        0 ? (
-          <div className="px-5 py-16 text-center">
+                <div className="text-[11px] font-semibold text-zinc-300">
+                  {nextAction}
+                </div>
 
-            <div className="text-sm font-semibold text-zinc-300">
-              No leads found
+                <div className="mt-1 text-[9px] leading-4 text-zinc-600">
+                  No open task is currently assigned to this lead.
+                </div>
+
+              </div>
+            )}
+
+
+            {tasks.length >
+            0 ? (
+              <div className="mt-4 grid gap-2 md:grid-cols-2">
+
+                {tasks
+                  .slice(
+                    0,
+                    6,
+                  )
+                  .map(
+                    (
+                      task,
+                    ) => (
+                      <div
+                        key={
+                          task.id
+                        }
+                        className="rounded-xl border border-white/[0.055] bg-white/[0.015] p-3"
+                      >
+
+                        <div className="flex items-center justify-between gap-3">
+
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-[7px] font-semibold ${
+                              task.status ===
+                              "completed"
+                                ? "border-emerald-500/15 bg-emerald-500/[0.06] text-emerald-300"
+                                : task.status ===
+                                    "cancelled"
+                                  ? "border-red-500/15 bg-red-500/[0.06] text-red-300"
+                                  : priorityClasses(
+                                      task.priority,
+                                    )
+                            }`}
+                          >
+                            {task.status ===
+                            "open"
+                              ? prettyStatus(
+                                  task.priority,
+                                )
+                              : prettyStatus(
+                                  task.status,
+                                )}
+                          </span>
+
+                          <span className="text-[8px] text-zinc-700">
+                            {formatDate(
+                              task.due_at,
+                            )}
+                          </span>
+
+                        </div>
+
+                        <div className="mt-2 truncate text-[10px] font-medium text-zinc-300">
+                          {task.title}
+                        </div>
+
+                      </div>
+                    ),
+                  )}
+
+              </div>
+            ) : null}
+
+          </Panel>
+
+
+          {/* REPLY INTELLIGENCE */}
+
+          {lead.has_replied ? (
+            <Panel
+              title="Reply intelligence"
+              subtitle="Latest inbound response and handling state."
+              action={
+                <Link
+                  href="/admin/replies?handling=open"
+                  className="text-[9px] font-medium text-amber-400 hover:text-amber-300"
+                >
+                  Open inbox →
+                </Link>
+              }
+            >
+
+              <div className="grid gap-3 md:grid-cols-3">
+
+                <div className="rounded-xl border border-white/[0.06] bg-black/15 p-4">
+
+                  <div className="text-[8px] font-semibold uppercase tracking-[0.1em] text-zinc-700">
+                    Classification
+                  </div>
+
+                  <div className="mt-3">
+
+                    <span
+                      className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${classificationClasses(
+                        latestClassification,
+                      )}`}
+                    >
+                      {latestClassification
+                        ? prettyStatus(
+                            latestClassification,
+                          )
+                        : "Replied"}
+                    </span>
+
+                  </div>
+
+                </div>
+
+
+                <div className="rounded-xl border border-white/[0.06] bg-black/15 p-4">
+
+                  <div className="text-[8px] font-semibold uppercase tracking-[0.1em] text-zinc-700">
+                    Attention
+                  </div>
+
+                  <div
+                    className={`mt-3 text-[11px] font-semibold ${
+                      replyNeedsAttention
+                        ? "text-amber-300"
+                        : "text-emerald-300"
+                    }`}
+                  >
+                    {replyNeedsAttention
+                      ? "Needs review"
+                      : "No urgent flag"}
+                  </div>
+
+                </div>
+
+
+                <div className="rounded-xl border border-white/[0.06] bg-black/15 p-4">
+
+                  <div className="text-[8px] font-semibold uppercase tracking-[0.1em] text-zinc-700">
+                    Latest reply
+                  </div>
+
+                  <div className="mt-3 text-[10px] font-medium text-zinc-300">
+                    {formatDate(
+                      lead.last_reply_at,
+                    )}
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              {lead.last_reply_subject ? (
+                <div className="mt-4 rounded-xl border border-white/[0.055] bg-white/[0.015] p-4">
+
+                  <div className="text-[8px] font-semibold uppercase tracking-[0.1em] text-zinc-700">
+                    Subject
+                  </div>
+
+                  <div className="mt-2 text-[11px] text-zinc-300">
+                    {lead.last_reply_subject}
+                  </div>
+
+                </div>
+              ) : null}
+
+            </Panel>
+          ) : null}
+
+
+          {/* CRM ACTIVITY */}
+
+          <Panel
+            title="CRM activity"
+            subtitle="Sales, email, task, onboarding and document events in one timeline."
+          >
+
+            {recentActivity.length >
+            0 ? (
+              <div className="relative">
+
+                <div className="absolute bottom-2 left-[5px] top-2 w-px bg-white/[0.055]" />
+
+                <div className="space-y-5">
+
+                  {recentActivity.map(
+                    (
+                      item,
+                    ) => (
+                      <div
+                        key={
+                          item.id
+                        }
+                        className="relative flex gap-4"
+                      >
+
+                        <div
+                          className={`relative z-10 mt-1.5 h-[11px] w-[11px] shrink-0 rounded-full border-[3px] border-[#0d1117] ${activityToneClasses(
+                            item.tone,
+                          )}`}
+                        />
+
+
+                        <div className="min-w-0 flex-1 border-b border-white/[0.04] pb-5">
+
+                          <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+
+                            <div className="min-w-0">
+
+                              <div className="text-[10px] font-semibold text-zinc-300">
+                                {item.title}
+                              </div>
+
+                              {item.detail ? (
+                                <div className="mt-1 max-w-3xl text-[9px] leading-4 text-zinc-600">
+                                  {item.detail}
+                                </div>
+                              ) : null}
+
+                              {item.meta ? (
+                                <div className="mt-1 text-[8px] text-zinc-700">
+                                  {item.meta}
+                                </div>
+                              ) : null}
+
+                            </div>
+
+                            <div className="shrink-0 text-[8px] text-zinc-700">
+                              {formatDate(
+                                item.date,
+                              )}
+                            </div>
+
+                          </div>
+
+                        </div>
+
+                      </div>
+                    ),
+                  )}
+
+                </div>
+
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/[0.055] bg-black/15 p-5 text-[10px] text-zinc-600">
+                No CRM activity has been recorded yet.
+              </div>
+            )}
+
+          </Panel>
+
+
+          {/* CONVERSATION */}
+
+          <Panel
+            title="Conversation"
+            subtitle={`${conversation.length} email event${
+              conversation.length ===
+              1
+                ? ""
+                : "s"
+            } in the SlateLane conversation history.`}
+            action={
+              lead.has_replied ? (
+                <span className="rounded-full border border-emerald-500/15 bg-emerald-500/[0.06] px-2.5 py-1 text-[8px] font-semibold text-emerald-300">
+                  Automated outreach stopped
+                </span>
+              ) : enrollment?.status ===
+                "active" ? (
+                <span className="rounded-full border border-blue-500/15 bg-blue-500/[0.06] px-2.5 py-1 text-[8px] font-semibold text-blue-300">
+                  Sequence active
+                </span>
+              ) : null
+            }
+          >
+
+            {conversation.length >
+            0 ? (
+              <div className="space-y-5">
+
+                {conversation.map(
+                  (
+                    item,
+                  ) => {
+                    if (
+                      item.type ===
+                      "reply"
+                    ) {
+                      return (
+                        <div
+                          key={
+                            `reply-${item.id}`
+                          }
+                          className="flex justify-start"
+                        >
+
+                          <div className="max-w-[92%] rounded-[16px] rounded-tl-md border border-emerald-500/15 bg-emerald-500/[0.035] p-4 md:max-w-[82%]">
+
+                            <div className="flex flex-wrap items-center gap-2">
+
+                              <span className="text-[10px] font-semibold text-emerald-300">
+                                Carrier Reply
+                              </span>
+
+
+                              {item.classification ? (
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 text-[7px] font-semibold ${classificationClasses(
+                                    item.classification,
+                                  )}`}
+                                >
+                                  {prettyStatus(
+                                    item.classification,
+                                  )}
+                                </span>
+                              ) : null}
+
+
+                              {item.requiresAttention ? (
+                                <span className="rounded-full border border-amber-500/15 bg-amber-500/[0.06] px-2 py-0.5 text-[7px] font-semibold text-amber-300">
+                                  Attention
+                                </span>
+                              ) : null}
+
+
+                              {item.handled ? (
+                                <span className="rounded-full border border-white/[0.07] bg-white/[0.025] px-2 py-0.5 text-[7px] text-zinc-500">
+                                  Handled
+                                </span>
+                              ) : null}
+
+                            </div>
+
+
+                            <div className="mt-2 text-[8px] text-zinc-700">
+                              From{" "}
+                              {item.email}
+                              {" • "}
+                              {formatDate(
+                                item.date,
+                              )}
+                            </div>
+
+
+                            {item.subject ? (
+                              <div className="mt-4 text-[11px] font-semibold text-zinc-200">
+                                {item.subject}
+                              </div>
+                            ) : null}
+
+
+                            <div className="mt-3 whitespace-pre-wrap break-words text-[10px] leading-6 text-zinc-400">
+                              {item.text ||
+                                "Reply contained no plain-text body."}
+                            </div>
+
+
+                            {item.attachments >
+                            0 ? (
+                              <div className="mt-3 text-[8px] text-zinc-600">
+                                {item.attachments} attachment
+                                {item.attachments ===
+                                1
+                                  ? ""
+                                  : "s"}
+                              </div>
+                            ) : null}
+
+                          </div>
+
+                        </div>
+                      );
+                    }
+
+
+                    return (
+                      <div
+                        key={
+                          `send-${item.id}`
+                        }
+                        className="flex justify-end"
+                      >
+
+                        <div className="max-w-[92%] rounded-[16px] rounded-tr-md border border-blue-500/15 bg-blue-500/[0.03] p-4 md:max-w-[82%]">
+
+                          <div className="flex flex-wrap items-center gap-2">
+
+                            <span className="text-[10px] font-semibold text-blue-300">
+                              SlateLane
+                            </span>
+
+
+                            <span
+                              className={`rounded-full border px-2 py-0.5 text-[7px] font-semibold ${emailStatusClasses(
+                                item.status,
+                              )}`}
+                            >
+                              {prettyStatus(
+                                item.status,
+                              )}
+                            </span>
+
+                          </div>
+
+
+                          <div className="mt-2 text-[8px] text-zinc-700">
+                            To{" "}
+                            {item.email}
+                            {" • "}
+                            {formatDate(
+                              item.date,
+                            )}
+                          </div>
+
+
+                          <div className="mt-4 text-[11px] font-semibold text-zinc-200">
+                            {item.subject ||
+                              "(No subject)"}
+                          </div>
+
+
+                          {item.error ? (
+                            <div className="mt-3 rounded-lg border border-red-500/15 bg-red-500/[0.04] p-3 text-[9px] leading-4 text-red-300">
+                              {item.error}
+                            </div>
+                          ) : null}
+
+                        </div>
+
+                      </div>
+                    );
+                  },
+                )}
+
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/[0.055] bg-black/15 p-5">
+
+                <div className="text-[10px] font-semibold text-zinc-300">
+                  No email history yet
+                </div>
+
+                <div className="mt-1 text-[9px] leading-4 text-zinc-600">
+                  SlateLane has not recorded an outbound email or inbound reply for this lead.
+                </div>
+
+              </div>
+            )}
+
+          </Panel>
+
+
+          {/* RECORD DETAILS */}
+
+          <Panel
+            title="Record details"
+            subtitle="Underlying CRM record timestamps and acquisition metadata."
+          >
+
+            <div className="grid gap-x-8 md:grid-cols-2">
+
+              <InfoRow
+                label="Lead ID"
+                value={
+                  <span className="break-all font-mono text-[9px]">
+                    {lead.id}
+                  </span>
+                }
+              />
+
+
+              <InfoRow
+                label="Created"
+                value={
+                  formatDate(
+                    lead.created_at,
+                  )
+                }
+              />
+
+
+              <InfoRow
+                label="Updated"
+                value={
+                  formatDate(
+                    lead.updated_at,
+                  )
+                }
+              />
+
+
+              <InfoRow
+                label="Acquisition"
+                value={
+                  carrier?.acquisition_source
+                    ? prettyStatus(
+                        carrier.acquisition_source,
+                      )
+                    : sourceLabel(
+                        lead.source,
+                      )
+                }
+              />
+
+
+              <InfoRow
+                label="First seen"
+                value={
+                  formatDate(
+                    carrier?.source_first_seen_at,
+                  )
+                }
+              />
+
+
+              <InfoRow
+                label="Last FMCSA sync"
+                value={
+                  formatDate(
+                    carrier?.last_fmcsa_sync,
+                  )
+                }
+              />
+
             </div>
 
-            <div className="mt-2 text-[11px] text-zinc-600">
-              Adjust the pipeline filters or clear your current view.
-            </div>
+          </Panel>
 
-            <Link
-              href="/admin/leads"
-              className="mt-4 inline-flex rounded-lg border border-white/[0.08] px-3 py-2 text-[10px] font-semibold text-zinc-400 hover:bg-white/[0.035]"
-            >
-              Clear all filters
-            </Link>
-
-          </div>
-        ) : null}
-
-      </section>
-
-      {/* =====================================================
-          PAGINATION
-      ===================================================== */}
-
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-
-        <div className="text-[10px] text-zinc-700">
-          Page{" "}
-          <span className="text-zinc-500">
-            {page}
-          </span>{" "}
-          of{" "}
-          <span className="text-zinc-500">
-            {totalPages}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-
-          {page > 1 ? (
-            <Link
-              href={buildUrl(
-                currentParams,
-                {
-                  page:
-                    page - 1,
-                },
-              )}
-              className="inline-flex h-9 items-center rounded-lg border border-white/[0.075] bg-white/[0.02] px-3 text-[10px] font-semibold text-zinc-400 hover:bg-white/[0.05]"
-            >
-              ← Previous
-            </Link>
-          ) : (
-            <span className="inline-flex h-9 cursor-not-allowed items-center rounded-lg border border-white/[0.045] px-3 text-[10px] text-zinc-800">
-              ← Previous
-            </span>
-          )}
-
-          <span className="inline-flex h-9 min-w-10 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 text-[10px] font-semibold text-zinc-500">
-            {page}
-          </span>
-
-          {page <
-          totalPages ? (
-            <Link
-              href={buildUrl(
-                currentParams,
-                {
-                  page:
-                    page + 1,
-                },
-              )}
-              className="inline-flex h-9 items-center rounded-lg border border-white/[0.075] bg-white/[0.02] px-3 text-[10px] font-semibold text-zinc-400 hover:bg-white/[0.05]"
-            >
-              Next →
-            </Link>
-          ) : (
-            <span className="inline-flex h-9 cursor-not-allowed items-center rounded-lg border border-white/[0.045] px-3 text-[10px] text-zinc-800">
-              Next →
-            </span>
-          )}
-
-        </div>
+        </main>
 
       </div>
 
