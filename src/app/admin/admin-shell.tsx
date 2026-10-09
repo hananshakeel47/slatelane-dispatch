@@ -191,6 +191,22 @@ const NAV_ITEMS:
       status:
         "new",
     },
+    {
+      href:
+        "/admin/loadboard",
+
+      label:
+        "Load Board",
+
+      group:
+        "Operations",
+
+      icon:
+        "operations",
+
+      status:
+        "new",
+    },
 
     {
       href:
