@@ -444,6 +444,99 @@ async function applyClassificationToLead(
 // PROCESS INBOUND EMAIL
 // ============================================================
 
+async function notifyZohoOfReply(input: {
+  receivedEmailId: string;
+  leadId: string;
+  fromEmail: string;
+  subject: string | null;
+  message: string | null;
+  classification: string;
+}) {
+  const db = createAdminSupabase();
+
+  const { data: existing, error: checkError } = await db
+    .from("email_replies")
+    .select("notification_sent_at")
+    .eq("resend_received_email_id", input.receivedEmailId)
+    .maybeSingle();
+
+  if (checkError || !existing) {
+    throw new Error("Could not check reply notification status.");
+  }
+
+  if (existing.notification_sent_at) return;
+
+  const from = process.env.RESEND_FROM_EMAIL;
+  if (!from) throw new Error("Missing notification sender.");
+
+  const { data: lead, error: leadError } = await db
+    .from("leads")
+    .select("company_name")
+    .eq("id", input.leadId)
+    .maybeSingle();
+
+  if (leadError) throw new Error(leadError.message);
+
+  const company = lead?.company_name || "Carrier";
+  const base = (
+    process.env.SLATELANE_PUBLIC_URL ||
+    "https://www.slatelanedispatch.com"
+  ).replace(/\/+$/, "");
+
+  const text = [
+    "NEW CARRIER REPLY - SLATELANE",
+    "",
+    "Carrier: " + company,
+    "Classification: " + input.classification,
+    "From: " + input.fromEmail,
+    "Subject: " + (input.subject || "(No subject)"),
+    "",
+    "Message:",
+    (input.message || "(No text body)").slice(0, 1000),
+    "",
+    "Lead profile: " + base + "/admin/leads/" + input.leadId,
+    "Replies: " + base + "/admin/replies",
+    "",
+    "Automated notification. Review the reply in SlateLane."
+  ].join("\n");
+
+  const { data, error } = await getResendClient().emails.send(
+    {
+      from,
+      to: ["contact@slatelanedispatch.com"],
+      subject:
+        "[SlateLane Reply] " +
+        input.classification.toUpperCase() +
+        " - " + company,
+      text
+    },
+    {
+      idempotencyKey:
+        "slatelane-reply-" + input.receivedEmailId
+    }
+  );
+
+  if (error || !data?.id) {
+    throw new Error(
+      "Zoho notification rejected: " +
+      (error?.message || "No send ID")
+    );
+  }
+
+  const { error: updateError } = await db
+    .from("email_replies")
+    .update({
+      notification_sent_at: new Date().toISOString(),
+      notification_resend_email_id: data.id
+    })
+    .eq("resend_received_email_id", input.receivedEmailId);
+
+  if (updateError) {
+    throw new Error(
+      "Notification tracking failed: " + updateError.message
+    );
+  }
+}
 async function processInboundEmail(
   event:
     ResendWebhookEvent
@@ -800,7 +893,16 @@ async function processInboundEmail(
         subject,
         false
       );
-    }
+
+      await notifyZohoOfReply({
+        receivedEmailId,
+        leadId: lead.id,
+        fromEmail,
+        subject,
+        message: replyText,
+        classification: classification.classification
+      });
+}
 
 
     return {
@@ -836,7 +938,16 @@ async function processInboundEmail(
   );
 
 
-  console.log(
+
+  await notifyZohoOfReply({
+    receivedEmailId,
+    leadId: lead.id,
+    fromEmail,
+    subject,
+    message: replyText,
+    classification: classification.classification
+  });
+console.log(
     `Reply classified: ${classification.classification} for lead ${lead.id}`
   );
 
