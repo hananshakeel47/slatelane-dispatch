@@ -456,7 +456,7 @@ async function notifyZohoOfReply(input: {
 
   const { data: existing, error: checkError } = await db
     .from("email_replies")
-    .select("notification_sent_at")
+    .select("notification_sent_at, classification")
     .eq("resend_received_email_id", input.receivedEmailId)
     .maybeSingle();
 
@@ -465,6 +465,11 @@ async function notifyZohoOfReply(input: {
   }
 
   if (existing.notification_sent_at) return;
+
+  // Match the final CRM classification, including DB enrichment.
+  const crmClassification = String(
+    existing.classification || input.classification
+  ).trim().toLowerCase();
 
   const from = process.env.RESEND_FROM_EMAIL;
   if (!from) throw new Error("Missing notification sender.");
@@ -487,7 +492,7 @@ async function notifyZohoOfReply(input: {
     "NEW CARRIER REPLY - SLATELANE",
     "",
     "Carrier: " + company,
-    "Classification: " + input.classification,
+    "Classification: " + crmClassification,
     "From: " + input.fromEmail,
     "Subject: " + (input.subject || "(No subject)"),
     "",
@@ -506,7 +511,7 @@ async function notifyZohoOfReply(input: {
       to: ["contact@slatelanedispatch.com"],
       subject:
         "[SlateLane Reply] " +
-        input.classification.toUpperCase() +
+        crmClassification.toUpperCase() +
         " - " + company,
       text
     },
