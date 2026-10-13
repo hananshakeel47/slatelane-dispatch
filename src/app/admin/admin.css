@@ -2521,3 +2521,158 @@ span:nth-child(2) {
       0.01ms !important;
   }
 }
+
+/* SlateLane CRM readability pass 2026-10 */
+/* Scoped to admin pages; preserves public website styling. */
+
+.sl-admin {
+  --sl-muted: #b5c1d0;
+  --sl-muted-2: #96a5b7;
+  font-size: 14px;
+}
+
+.sl-admin .sl-content-inner {
+  line-height: 1.55;
+}
+
+/* Sidebar and navigation */
+.sl-admin .sl-brand-copy small {
+  color: #a4b2c3;
+  font-size: 10px;
+}
+
+.sl-admin .sl-nav-label {
+  color: #96a6ba;
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+}
+
+.sl-admin .sl-nav-text {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 580;
+}
+
+.sl-admin .sl-nav-status {
+  min-height: 18px;
+  font-size: 9px;
+}
+
+.sl-admin .sl-breadcrumb {
+  color: #a4b1c2;
+  font-size: 12.5px;
+}
+
+.sl-admin .sl-breadcrumb i {
+  color: #78869a;
+}
+
+/* Search and command interface */
+.sl-admin .sl-command-trigger-label {
+  font-size: 12px;
+}
+
+.sl-admin .sl-command-trigger kbd,
+.sl-admin .sl-command-search kbd {
+  color: #a5b3c5;
+  font-size: 10px;
+}
+
+.sl-admin .sl-command-item strong {
+  font-size: 13px;
+}
+
+.sl-admin .sl-command-item small,
+.sl-admin .sl-command-empty {
+  color: #a4b2c5;
+  font-size: 11.5px;
+}
+
+.sl-admin .sl-command-footer {
+  color: #a2afc1;
+  font-size: 11px;
+}
+
+.sl-admin .sl-environment-card small {
+  color: #9eacbd;
+  font-size: 11px;
+}
+
+.sl-admin .sl-env-pill {
+  font-size: 9px;
+}
+
+/* Improve compact typography throughout CRM pages */
+.sl-admin .sl-content-inner [class~="text-[8px]"] {
+  font-size: 10px;
+}
+
+.sl-admin .sl-content-inner [class~="text-[9px]"] {
+  font-size: 11px;
+}
+
+.sl-admin .sl-content-inner [class~="text-[10px]"] {
+  font-size: 11.5px;
+}
+
+.sl-admin .sl-content-inner [class~="text-[11px]"] {
+  font-size: 12.5px;
+}
+
+.sl-admin .sl-content-inner [class~="text-[12px]"] {
+  font-size: 13px;
+}
+
+.sl-admin .sl-content-inner [class~="text-[13px]"] {
+  font-size: 13.5px;
+}
+
+.sl-admin .sl-content-inner [class~="text-xs"] {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sl-admin .sl-content-inner [class~="text-sm"] {
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+/* Clearer secondary text; retain link/button hover states */
+.sl-admin .sl-content-inner [class~="text-zinc-400"]:not(:is(a, button):hover):not(:focus-visible),
+.sl-admin .sl-content-inner [class~="text-gray-400"]:not(:is(a, button):hover):not(:focus-visible),
+.sl-admin .sl-content-inner [class~="text-slate-400"]:not(:is(a, button):hover):not(:focus-visible) {
+  color: #c4cedb;
+}
+
+.sl-admin .sl-content-inner [class~="text-zinc-500"]:not(:is(a, button):hover):not(:focus-visible),
+.sl-admin .sl-content-inner [class~="text-gray-500"]:not(:is(a, button):hover):not(:focus-visible),
+.sl-admin .sl-content-inner [class~="text-slate-500"]:not(:is(a, button):hover):not(:focus-visible) {
+  color: #aab8c9;
+}
+
+.sl-admin .sl-content-inner [class~="text-zinc-600"]:not(:is(a, button):hover):not(:focus-visible),
+.sl-admin .sl-content-inner [class~="text-gray-600"]:not(:is(a, button):hover):not(:focus-visible),
+.sl-admin .sl-content-inner [class~="text-slate-600"]:not(:is(a, button):hover):not(:focus-visible) {
+  color: #95a5b8;
+}
+
+.sl-admin .sl-content-inner [class~="text-zinc-700"]:not(:is(a, button):hover):not(:focus-visible) {
+  color: #8294a9;
+}
+
+/* Search box and form placeholders */
+.sl-admin .sl-content-inner :is(input, textarea)::placeholder {
+  color: #9aaabc;
+  opacity: 1;
+}
+
+/* Mobile readability */
+@media (max-width: 720px) {
+  .sl-admin .sl-content-inner [class~="text-sm"] {
+    font-size: 14px;
+  }
+
+  .sl-admin .sl-nav-text {
+    font-size: 13px;
+  }
+}
