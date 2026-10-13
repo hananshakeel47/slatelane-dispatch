@@ -292,7 +292,7 @@ const NAV_ITEMS:
         "/admin/import",
 
       label:
-        "FMCSA Import",
+        "Motus Import Center",
 
       group:
         "Workspace",
