@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import {
   createAdminSupabase,
 } from "@/lib/supabase/admin";
@@ -125,6 +127,19 @@ export default async function LoadBoardPage() {
 
 
   return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-sky-500/20 bg-sky-500/[0.05] p-5">
+        <div>
+          <p className="font-semibold text-zinc-100">Pre-client freight research</p>
+          <p className="mt-1 text-sm text-zinc-400">
+            Record carrier requirements and public load research before onboarding.
+          </p>
+        </div>
+        <Link href="/admin/loadboard/prospects"
+          className="rounded-xl bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-600">
+          Prospect Research →
+        </Link>
+      </div>
     <LoadBoardClient
       initialSources={
         (
@@ -145,5 +160,6 @@ export default async function LoadBoardPage() {
         ) as LoadBoardSession[]
       }
     />
+    </div>
   );
 }

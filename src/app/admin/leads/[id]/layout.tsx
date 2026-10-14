@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type {
   ReactNode,
 } from "react";
@@ -38,6 +40,13 @@ export default async function LeadDetailLayout({
           id
         }
       />
+
+      <div className="flex justify-end">
+        <Link href={`/admin/loadboard/prospects?lead=${encodeURIComponent(id)}`}
+          className="inline-flex rounded-xl border border-sky-500/25 bg-sky-500/[0.06] px-4 py-2 text-sm font-semibold text-sky-300 hover:bg-sky-500/[0.1]">
+          Research Freight Opportunities →
+        </Link>
+      </div>
 
       {children}
 
