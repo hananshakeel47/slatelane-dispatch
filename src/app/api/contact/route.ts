@@ -19,13 +19,6 @@ export const runtime =
   "nodejs";
 
 
-const resend =
-  new Resend(
-    process.env
-      .RESEND_API_KEY,
-  );
-
-
 function clean(
   value:
     unknown,
@@ -70,6 +63,20 @@ export async function POST(
     Request,
 ) {
   try {
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (!resendApiKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Contact email is not configured for this deployment.",
+        },
+        {
+          status: 503,
+        },
+      );
+    }
+
+    const resend = new Resend(resendApiKey);
     const body =
       await request.json();
 

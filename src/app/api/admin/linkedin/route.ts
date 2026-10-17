@@ -53,6 +53,21 @@ function numberOrNull(
 }
 
 
+function validLinkedInUrl(value: string | null): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") &&
+      (hostname === "linkedin.com" || hostname.endsWith(".linkedin.com"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+
 function addDays(
   iso: string,
   days: number,
@@ -509,12 +524,7 @@ export async function POST(
 
 
       if (
-        !linkedinUrl ||
-        !linkedinUrl
-          .toLowerCase()
-          .includes(
-            "linkedin.com/",
-          )
+        !validLinkedInUrl(linkedinUrl)
       ) {
 
         return NextResponse.json(
@@ -528,6 +538,28 @@ export async function POST(
           {
             status:
               400,
+          },
+        );
+      }
+
+
+      const email =
+        clean(
+          body.email,
+        )?.toLowerCase() ?? null;
+
+
+      if (
+        email &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Enter a valid email address or leave the email field blank.",
+          },
+          {
+            status: 400,
           },
         );
       }
@@ -568,15 +600,16 @@ export async function POST(
               body.location,
             ),
 
-          email:
-            clean(
-              body.email,
-            )?.toLowerCase() ??
-            null,
+          email,
 
           phone:
             clean(
               body.phone,
+            ),
+
+          notes:
+            clean(
+              body.notes,
             ),
 
           carrier_dot_number:
@@ -843,6 +876,98 @@ export async function POST(
         .toISOString();
 
 
+    const terminalStatuses = [
+      "replied",
+      "qualified",
+      "not_interested",
+    ];
+
+
+    if (
+      [
+        "connection_requested",
+        "connection_accepted",
+        "message_sent",
+        "reply_received",
+      ].includes(action || "") &&
+      terminalStatuses.includes(prospect.status)
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "This prospect is no longer eligible for outreach actions.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    if (
+      action === "connection_requested" &&
+      prospect.status !== "new"
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "A connection request can only be recorded for a new prospect.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    if (
+      action === "connection_accepted" &&
+      prospect.status !== "connection_pending"
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Mark the connection request as sent before recording acceptance.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    if (
+      action === "qualified" &&
+      prospect.status === "not_interested"
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "A prospect marked not interested cannot be qualified without reviewing their status first.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    if (
+      action === "not_interested" &&
+      prospect.status === "qualified"
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "A qualified prospect cannot be marked not interested through this action.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
     const update:
       Record<
         string,
@@ -966,6 +1091,58 @@ export async function POST(
           {
             status:
               400,
+          },
+        );
+      }
+
+
+      const expectedStep =
+        Number(prospect.last_step_sent || 0) + 1;
+
+
+      if (
+        prospect.status !== "connected" &&
+        prospect.status !== "messaged"
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "A LinkedIn message can only be recorded after the connection is accepted.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+
+      if (
+        step !== expectedStep
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Outreach steps must be recorded in order. The next expected step is " + expectedStep + ".",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+
+      if (
+        step > 1 &&
+        prospect.next_followup_at &&
+        new Date(prospect.next_followup_at).getTime() > Date.now()
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "This follow-up is not due yet. Wait until " + prospect.next_followup_at + ".",
+          },
+          {
+            status: 409,
           },
         );
       }
