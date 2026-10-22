@@ -11,6 +11,8 @@ export type CarrierDocumentType =
   | "coi"
   | "authority"
   | "factoring_noa"
+  | "factoring_agreement"
+  | "limited_power_of_attorney"
   | "payment_setup"
   | "rate_confirmation"
   | "pod"
@@ -547,6 +549,22 @@ export async function markCarrierDocumentStatus(
   }
 
   const {
+    data: previousDocument,
+    error: previousDocumentError,
+  } = await supabase
+    .from("carrier_document_records")
+    .select("onboarding_id, status")
+    .eq("id", documentId)
+    .maybeSingle();
+
+  if (previousDocumentError || !previousDocument) {
+    throw new Error(
+      previousDocumentError?.message ||
+        "Document was not found."
+    );
+  }
+
+  const {
     data,
     error,
   } = await supabase.rpc(
@@ -575,6 +593,27 @@ export async function markCarrierDocumentStatus(
   if (error) {
     throw new Error(
       error.message
+    );
+  }
+
+  const { error: auditError } = await supabase
+    .from("carrier_portal_audit_events")
+    .insert({
+      onboarding_id: previousDocument.onboarding_id,
+      document_id: documentId,
+      event_type: "document_status_changed",
+      metadata: {
+        from_status: previousDocument.status,
+        to_status: status,
+        actor: "admin_crm",
+        note: note?.trim() || null,
+      },
+    });
+
+  if (auditError) {
+    console.error(
+      "CARRIER_PORTAL_REVIEW_AUDIT_FAILED",
+      auditError.message
     );
   }
 

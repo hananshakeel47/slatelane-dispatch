@@ -177,6 +177,23 @@ const NAV_ITEMS:
 
     {
       href:
+        "/admin/client-portal",
+
+      label:
+        "Client Portal",
+
+      group:
+        "Operations",
+
+      icon:
+        "onboarding",
+
+      status:
+        "new",
+    },
+
+    {
+      href:
         "/admin/operations",
 
       label:

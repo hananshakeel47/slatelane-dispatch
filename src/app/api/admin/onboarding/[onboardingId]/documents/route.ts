@@ -224,6 +224,8 @@ export async function POST(
         "coi",
         "authority",
         "factoring_noa",
+        "factoring_agreement",
+        "limited_power_of_attorney",
         "payment_setup",
         "rate_confirmation",
         "pod",
