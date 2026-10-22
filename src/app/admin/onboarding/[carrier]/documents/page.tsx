@@ -29,6 +29,8 @@ type DocumentType =
   | "coi"
   | "authority"
   | "factoring_noa"
+  | "factoring_agreement"
+  | "limited_power_of_attorney"
   | "payment_setup"
   | "rate_confirmation"
   | "pod"
@@ -180,6 +182,10 @@ const DOCUMENT_LABELS: Record<DocumentType, string> = {
 
   factoring_noa: "Factoring NOA",
 
+  factoring_agreement: "Factoring Agreement",
+
+  limited_power_of_attorney: "Limited Power of Attorney",
+
   payment_setup: "Payment Setup",
 
   rate_confirmation: "Rate Confirmation",
@@ -274,6 +280,28 @@ const REQUIREMENTS = [
 
     description:
       "Notice of Assignment when the carrier uses a factoring company.",
+  },
+
+  {
+    key: "factoring_agreement",
+
+    title: "Factoring Agreement",
+
+    uploadType: "factoring_agreement" as DocumentType,
+
+    description:
+      "Factoring agreement supplied by the carrier when they use a factoring company.",
+  },
+
+  {
+    key: "limited_power_of_attorney",
+
+    title: "Limited Power of Attorney",
+
+    uploadType: "limited_power_of_attorney" as DocumentType,
+
+    description:
+      "Signed limited power of attorney authorizing dispatch services.",
   },
 ] as const;
 
