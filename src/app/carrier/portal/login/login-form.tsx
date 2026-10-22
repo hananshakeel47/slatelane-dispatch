@@ -217,7 +217,7 @@ export default function CarrierPortalLoginForm() {
               }}
               className="text-sky-300 underline underline-offset-4 hover:text-sky-200 disabled:opacity-50"
             >
-              Request a new code
+              Use a different email
             </button>
           </div>
         </form>
