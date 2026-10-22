@@ -95,6 +95,16 @@ export async function POST(request: Request) {
     const now = new Date().toISOString();
 
     if (action === "revoke") {
+      const { data: activeAccess, error: lookupError } = await supabase
+        .from("carrier_portal_access")
+        .select("id, email")
+        .eq("onboarding_id", onboardingId)
+        .eq("status", "active");
+
+      if (lookupError) {
+        return json({ ok: false, message: "Could not revoke portal access." }, 503);
+      }
+
       const { error } = await supabase
         .from("carrier_portal_access")
         .update({
@@ -108,6 +118,23 @@ export async function POST(request: Request) {
       if (error) {
         console.error("ADMIN_CLIENT_PORTAL_REVOKE_FAILED", error.message);
         return json({ ok: false, message: "Could not revoke portal access." }, 503);
+      }
+
+      if (activeAccess?.length) {
+        const { error: auditError } = await supabase
+          .from("carrier_portal_audit_events")
+          .insert(
+            activeAccess.map((access) => ({
+              onboarding_id: onboardingId,
+              portal_access_id: access.id,
+              event_type: "portal_access_revoked",
+              metadata: { source: "admin_crm" },
+            }))
+          );
+
+        if (auditError) {
+          console.error("ADMIN_CLIENT_PORTAL_AUDIT_FAILED", auditError.message);
+        }
       }
 
       return json({ ok: true, message: "Portal access revoked." });
@@ -135,6 +162,17 @@ export async function POST(request: Request) {
     }
 
     // A portal grant is limited to the current primary contact for this onboarding.
+    const { data: oldAccess, error: oldAccessLookupError } = await supabase
+      .from("carrier_portal_access")
+      .select("id")
+      .eq("onboarding_id", onboardingId)
+      .eq("status", "active")
+      .neq("email", email);
+
+    if (oldAccessLookupError) {
+      return json({ ok: false, message: "Could not update existing portal access." }, 503);
+    }
+
     const { error: revokeOldError } = await supabase
       .from("carrier_portal_access")
       .update({
@@ -150,7 +188,24 @@ export async function POST(request: Request) {
       return json({ ok: false, message: "Could not update existing portal access." }, 503);
     }
 
-    const { error: upsertError } = await supabase
+    if (oldAccess?.length) {
+      const { error: auditError } = await supabase
+        .from("carrier_portal_audit_events")
+        .insert(
+          oldAccess.map((access) => ({
+            onboarding_id: onboardingId,
+            portal_access_id: access.id,
+            event_type: "portal_access_revoked",
+            metadata: { source: "admin_crm", reason: "primary_contact_changed" },
+          }))
+        );
+
+      if (auditError) {
+        console.error("ADMIN_CLIENT_PORTAL_AUDIT_FAILED", auditError.message);
+      }
+    }
+
+    const { data: newAccess, error: upsertError } = await supabase
       .from("carrier_portal_access")
       .upsert(
         {
@@ -161,11 +216,26 @@ export async function POST(request: Request) {
           updated_at: now,
         },
         { onConflict: "onboarding_id,email" }
-      );
+      )
+      .select("id")
+      .single();
 
-    if (upsertError) {
-      console.error("ADMIN_CLIENT_PORTAL_ENABLE_FAILED", upsertError.message);
+    if (upsertError || !newAccess) {
+      console.error("ADMIN_CLIENT_PORTAL_ENABLE_FAILED", upsertError?.message ?? "missing access row");
       return json({ ok: false, message: "Could not enable portal access." }, 503);
+    }
+
+    const { error: auditError } = await supabase
+      .from("carrier_portal_audit_events")
+      .insert({
+        onboarding_id: onboardingId,
+        portal_access_id: newAccess.id,
+        event_type: "portal_access_enabled",
+        metadata: { source: "admin_crm" },
+      });
+
+    if (auditError) {
+      console.error("ADMIN_CLIENT_PORTAL_AUDIT_FAILED", auditError.message);
     }
 
     return json({
