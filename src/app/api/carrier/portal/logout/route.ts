@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import {
-  getPortalSession,
   portalHash,
   PORTAL_SESSION_COOKIE,
   privateNoStoreHeaders,
