@@ -620,6 +620,22 @@ export default function CarrierDocumentVaultPage() {
               "factoring_noa",
             ]
           ),
+
+        factoring_agreement:
+          latestDocument(
+            documents,
+            [
+              "factoring_agreement",
+            ]
+          ),
+
+        limited_power_of_attorney:
+          latestDocument(
+            documents,
+            [
+              "limited_power_of_attorney",
+            ]
+          ),
       }),
       [documents]
     );
@@ -648,6 +664,16 @@ export default function CarrierDocumentVaultPage() {
     factoring_noa:
       readiness?.factoring_ready ??
       false,
+
+    factoring_agreement:
+      ["received", "signed", "approved"].includes(
+        latest.factoring_agreement?.status ?? ""
+      ),
+
+    limited_power_of_attorney:
+      ["received", "signed", "approved"].includes(
+        latest.limited_power_of_attorney?.status ?? ""
+      ),
   };
 
   function resetMessages() {
