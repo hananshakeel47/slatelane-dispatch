@@ -259,7 +259,7 @@ export default function ClientPortalManager() {
                             : "Enable portal access"}
                       </button>
                       <a
-                        href="/admin/onboarding/" + row.id + "/documents"
+                        href={"/admin/onboarding/" + row.id + "/documents"}
                         className="sl-button sl-button-secondary"
                       >
                         Open document vault
