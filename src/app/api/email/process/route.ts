@@ -418,6 +418,11 @@ function isTemporarySafetyReason(
   return [
     "global_safety_auto_paused",
     "enrollment_not_active",
+    "carrier_authority_too_new",
+    "carrier_authority_age_unknown",
+    "carrier_fleet_data_missing",
+    "external_verification_missing_or_expired",
+    "email_verification_error",
   ].includes(
     reason
   );
