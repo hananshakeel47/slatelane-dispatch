@@ -412,6 +412,41 @@ async function permanentlyBlockEnrollment(
  * Temporary conditions must not permanently
  * destroy an enrollment.
  */
+async function deferTemporaryEnrollment(
+  enrollmentId: string,
+  reason: string
+) {
+  const supabase = createAdminSupabase();
+  const now = new Date();
+  const nextSendAt = new Date(
+    now.getTime() + 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const { error } = await supabase
+    .from("email_sequence_enrollments")
+    .update({
+      next_send_at: nextSendAt,
+      updated_at: now.toISOString(),
+    })
+    .eq("id", enrollmentId)
+    .eq("status", "active");
+
+  if (error) {
+    throw new Error(
+      `Could not defer temporarily unsafe enrollment ${enrollmentId} (${reason}): ${error.message}`
+    );
+  }
+
+  console.warn("Deferring enrollment after temporary safety hold.", {
+    enrollmentId,
+    reason,
+    nextSendAt,
+  });
+
+  return nextSendAt;
+}
+
+
 function isTemporarySafetyReason(
   reason: string
 ) {
@@ -1661,6 +1696,26 @@ export async function POST(
           reason
         )
       ) {
+        if (reason !== "enrollment_not_active") {
+          await deferTemporaryEnrollment(
+            enrollment.id,
+            reason
+          );
+
+          safetyBlocked += 1;
+
+          blockedReasons[
+            reason
+          ] =
+            (
+              blockedReasons[
+                reason
+              ] ??
+              0
+            ) +
+            1;
+        }
+
         continue;
       }
 
