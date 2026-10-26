@@ -22,6 +22,22 @@ function dateAfterHours(
   return date.toISOString();
 }
 
+
+function isTemporaryEmailSafetyReason(
+  reason: string
+) {
+  return [
+    "global_safety_auto_paused",
+    "enrollment_not_active",
+    "carrier_authority_too_new",
+    "carrier_authority_age_unknown",
+    "carrier_authority_type_missing",
+    "carrier_fleet_data_missing",
+    "external_verification_missing_or_expired",
+    "email_verification_error",
+  ].includes(reason);
+}
+
 async function stopEnrollment(
   enrollmentId: string
 ) {
@@ -358,6 +374,92 @@ async function processEnrollment(
 
     return {
       status: "completed",
+    };
+  }
+
+  // Final server-side safety gate. The API preflight is defense in depth;
+  // the actual sequence processor must independently re-check before every send.
+  const {
+    data: eligibilityData,
+    error: eligibilityError,
+  } = await supabase.rpc(
+    "email_enrollment_send_eligibility",
+    {
+      p_enrollment_id: enrollment.id,
+    }
+  );
+
+  if (eligibilityError) {
+    throw new Error(
+      `Final email safety check failed for enrollment ${enrollment.id}: ${eligibilityError.message}`
+    );
+  }
+
+  const eligibility = (
+    eligibilityData ?? {}
+  ) as {
+    allowed?: boolean | string;
+    reason?: string;
+  };
+
+  const allowed =
+    eligibility.allowed === true ||
+    eligibility.allowed === "true";
+
+  const safetyReason = String(
+    eligibility.reason ||
+    (allowed ? "eligible" : "unknown_safety_reason")
+  );
+
+  if (!allowed) {
+    if (isTemporaryEmailSafetyReason(safetyReason)) {
+      const now = new Date();
+      const nextSendAt = new Date(
+        now.getTime() + 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      const { error: deferError } = await supabase
+        .from("email_sequence_enrollments")
+        .update({
+          next_send_at: nextSendAt,
+          updated_at: now.toISOString(),
+        })
+        .eq("id", enrollment.id)
+        .eq("status", "active");
+
+      if (deferError) {
+        throw new Error(
+          `Could not defer temporarily unsafe enrollment ${enrollment.id}: ${deferError.message}`
+        );
+      }
+
+      return {
+        status: "deferred",
+        reason: safetyReason,
+        nextSendAt,
+      };
+    }
+
+    const { data: blockResult, error: blockError } =
+      await supabase.rpc(
+        "block_unsafe_email_enrollment",
+        {
+          p_enrollment_id: enrollment.id,
+          p_reason: safetyReason,
+          p_eligibility: eligibilityData ?? {},
+        }
+      );
+
+    if (blockError) {
+      throw new Error(
+        `Could not block unsafe enrollment ${enrollment.id}: ${blockError.message}`
+      );
+    }
+
+    return {
+      status: "stopped",
+      reason: safetyReason,
+      safety: blockResult,
     };
   }
 
