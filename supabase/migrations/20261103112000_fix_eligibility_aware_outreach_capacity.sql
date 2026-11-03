@@ -81,7 +81,6 @@ GRANT EXECUTE ON FUNCTION public.email_enrollment_reservation_eligible(uuid)
 DO $migration$
 DECLARE
     v_definition text;
-    v_before text;
     v_old text;
     v_new text;
     v_occurrences integer;
