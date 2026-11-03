@@ -90,6 +90,182 @@ function clampInteger(
 }
 
 
+function addCalendarDaysToIsoDate(
+  dateOnly: string,
+  days: number
+): string | null {
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(dateOnly);
+
+  if (!match) {
+    return null;
+  }
+
+  const date = new Date(
+    Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3])
+    )
+  );
+
+  if (!Number.isFinite(date.getTime())) {
+    return null;
+  }
+
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+
+function getLocalDateOnly(
+  date: Date,
+  timeZone: string
+): string | null {
+  try {
+    const parts = new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }
+    ).formatToParts(date);
+
+    const getPart = (type: string) =>
+      parts.find((part) => part.type === type)?.value;
+
+    const year = getPart("year");
+    const month = getPart("month");
+    const day = getPart("day");
+
+    if (!year || !month || !day) {
+      return null;
+    }
+
+    return `${year}-${month}-${day}`;
+  } catch (error) {
+    console.error(
+      "Could not calculate local calendar date:",
+      error
+    );
+    return null;
+  }
+}
+
+
+/*
+ * Convert a wall-clock time in an IANA timezone into a UTC Date.
+ * The configured send-window opening time is not in a DST gap or overlap.
+ */
+function getUtcDateForLocalTime(
+  dateOnly: string,
+  hour: number,
+  minute: number,
+  timeZone: string
+): Date | null {
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(dateOnly);
+
+  if (!match) {
+    return null;
+  }
+
+  const localAsUtc = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    hour,
+    minute,
+    0,
+    0
+  );
+
+  try {
+    const parts = new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      }
+    ).formatToParts(new Date(localAsUtc));
+
+    const getPart = (type: string) =>
+      Number(parts.find((part) => part.type === type)?.value);
+
+    const representedAsUtc = Date.UTC(
+      getPart("year"),
+      getPart("month") - 1,
+      getPart("day"),
+      getPart("hour"),
+      getPart("minute"),
+      getPart("second")
+    );
+
+    if (!Number.isFinite(representedAsUtc)) {
+      return null;
+    }
+
+    const timezoneOffset = representedAsUtc - localAsUtc;
+    return new Date(localAsUtc - timezoneOffset);
+  } catch (error) {
+    console.error(
+      "Could not convert local send-window time to UTC:",
+      error
+    );
+    return null;
+  }
+}
+
+
+function getNextSendingWindowStart(
+  now: Date,
+  timeZone: string,
+  sendingHourStart: number
+): Date | null {
+  const todayLocal = getLocalDateOnly(now, timeZone);
+
+  if (!todayLocal) {
+    return null;
+  }
+
+  const todayStart = getUtcDateForLocalTime(
+    todayLocal,
+    sendingHourStart,
+    0,
+    timeZone
+  );
+
+  if (
+    todayStart &&
+    todayStart.getTime() > now.getTime()
+  ) {
+    return todayStart;
+  }
+
+  const tomorrowLocal = addCalendarDaysToIsoDate(
+    todayLocal,
+    1
+  );
+
+  if (!tomorrowLocal) {
+    return null;
+  }
+
+  return getUtcDateForLocalTime(
+    tomorrowLocal,
+    sendingHourStart,
+    0,
+    timeZone
+  );
+}
+
+
 function getCurrentHourInTimeZone(
   timeZone: string
 ) {
@@ -414,18 +590,103 @@ async function permanentlyBlockEnrollment(
  */
 async function deferTemporaryEnrollment(
   enrollmentId: string,
-  reason: string
+  reason: string,
+  eligibility: SafetyResult,
+  timeZone: string,
+  sendingHourStart: number
 ) {
   const supabase = createAdminSupabase();
   const now = new Date();
-  const nextSendAt = new Date(
-    now.getTime() + 24 * 60 * 60 * 1000
-  ).toISOString();
+
+  let nextSendAt: Date | null = null;
+  let authorityEligibleOn: string | null = null;
+
+  /*
+   * A carrier held only by the 14-day authority-age rule should be
+   * retried on the exact eligibility date, at the configured local
+   * sending-window opening time (currently 09:00 America/Chicago).
+   */
+  if (
+    reason === "carrier_authority_too_new" &&
+    typeof eligibility.carrier_id === "number"
+  ) {
+    const {
+      data: carrier,
+      error: carrierError,
+    } = await supabase
+      .from("carriers")
+      .select("motus_authority_event_date, authority_date")
+      .eq("id", eligibility.carrier_id)
+      .maybeSingle();
+
+    if (carrierError) {
+      console.warn(
+        "Could not read authority date for exact eligibility retry; using safe 24-hour deferral.",
+        {
+          enrollmentId,
+          carrierId: eligibility.carrier_id,
+          error: carrierError.message,
+        }
+      );
+    } else {
+      const authorityEventDate =
+        carrier?.motus_authority_event_date ??
+        carrier?.authority_date ??
+        null;
+
+      if (typeof authorityEventDate === "string") {
+        authorityEligibleOn = addCalendarDaysToIsoDate(
+          authorityEventDate,
+          14
+        );
+
+        if (authorityEligibleOn) {
+          const exactEligibilityTime = getUtcDateForLocalTime(
+            authorityEligibleOn,
+            sendingHourStart,
+            0,
+            timeZone
+          );
+
+          if (
+            exactEligibilityTime &&
+            exactEligibilityTime.getTime() > now.getTime()
+          ) {
+            nextSendAt = exactEligibilityTime;
+          } else {
+            /*
+             * If the eligibility morning has already passed, retry at
+             * the next local sending-window opening rather than looping
+             * every 24 hours or retrying immediately.
+             */
+            nextSendAt = getNextSendingWindowStart(
+              now,
+              timeZone,
+              sendingHourStart
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /*
+   * Other temporary safety reasons retain the existing 24-hour retry.
+   * If an authority date is missing or cannot be converted, fail closed
+   * with the same conservative fallback.
+   */
+  if (!nextSendAt) {
+    nextSendAt = new Date(
+      now.getTime() + 24 * 60 * 60 * 1000
+    );
+  }
+
+  const nextSendAtIso = nextSendAt.toISOString();
 
   const { error } = await supabase
     .from("email_sequence_enrollments")
     .update({
-      next_send_at: nextSendAt,
+      next_send_at: nextSendAtIso,
       updated_at: now.toISOString(),
     })
     .eq("id", enrollmentId)
@@ -440,10 +701,13 @@ async function deferTemporaryEnrollment(
   console.warn("Deferring enrollment after temporary safety hold.", {
     enrollmentId,
     reason,
-    nextSendAt,
+    authorityEligibleOn,
+    nextSendAt: nextSendAtIso,
+    timeZone,
+    sendingHourStart,
   });
 
-  return nextSendAt;
+  return nextSendAtIso;
 }
 
 
@@ -1699,7 +1963,10 @@ export async function POST(
         if (reason !== "enrollment_not_active") {
           await deferTemporaryEnrollment(
             enrollment.id,
-            reason
+            reason,
+            safety,
+            sendingTimezone,
+            sendingHourStart
           );
 
           safetyBlocked += 1;
