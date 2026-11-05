@@ -105,7 +105,6 @@ const CARGO_FIELDS = {
   crgo_farmsupp: "farm_supplies",
   crgo_construct: "construction",
   crgo_waterwell: "water_well",
-  crgo_cargoothr: "other_cargo",
 };
 
 export function clean(value) {
@@ -176,11 +175,9 @@ export function getCargoSignals(row) {
     }
   }
 
-  if (
-    isMarked(row.crgo_cargoothr) &&
-    clean(row.crgo_cargoothr_desc)
-  ) {
-    signals.push("other:" + clean(row.crgo_cargoothr_desc));
+  if (isMarked(row.crgo_cargoothr)) {
+    const description = clean(row.crgo_cargoothr_desc);
+    signals.push(description ? "other:" + description : "other");
   }
 
   return signals;
