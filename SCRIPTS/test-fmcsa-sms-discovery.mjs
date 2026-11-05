@@ -126,7 +126,7 @@ assert.deepEqual(
     crgo_cargoothr: "X",
     crgo_cargoothr_desc: "specialized freight",
   }),
-  ["other_cargo", "other:specialized freight"],
+  ["other:specialized freight"],
 );
 
 assert.equal(
