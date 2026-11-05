@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "fmcsa:sms:dry-run": "node SCRIPTS/dry-run-fmcsa-sms.mjs",
+    "test:fmcsa:sms": "node SCRIPTS/test-fmcsa-sms-discovery.mjs"
   },
   "dependencies": {
     "@next/third-parties": "^16.2.9",
