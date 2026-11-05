@@ -24,6 +24,11 @@ const sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function timestampToIso(value) {
+  if (typeof value === "string" && value.trim() && !/^\d+$/.test(value.trim())) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return null;
 
@@ -40,6 +45,23 @@ function metadataVersion(metadata) {
     metadata.rowsUpdatedAt ?? "",
     metadata.dataUpdatedAt ?? "",
   ].join("|");
+}
+
+function assertMetadataVersionExists(datasetId, metadata) {
+  if (
+    metadata.rowsUpdatedAt === undefined ||
+    metadata.rowsUpdatedAt === null
+  ) {
+    if (
+      metadata.dataUpdatedAt === undefined ||
+      metadata.dataUpdatedAt === null
+    ) {
+      throw new Error(
+        "Could not verify the publication version for dataset " +
+        datasetId + ". Stopping rather than producing an unstable count.",
+      );
+    }
+  }
 }
 
 function summarizeMetadata(datasetId, metadata) {
@@ -232,6 +254,8 @@ async function main() {
   console.log("Reading FMCSA dataset publication metadata...");
   const smsMetadataBefore = await fetchDatasetMetadata(SMS_DATASET_ID);
   const censusMetadataBefore = await fetchDatasetMetadata(CENSUS_DATASET_ID);
+  assertMetadataVersionExists(SMS_DATASET_ID, smsMetadataBefore);
+  assertMetadataVersionExists(CENSUS_DATASET_ID, censusMetadataBefore);
 
   console.log("Reading SMS AB PassProperty USDOT universe...");
   const smsDots = new Set();
@@ -324,6 +348,8 @@ async function main() {
   console.log("Rechecking dataset publication metadata...");
   const smsMetadataAfter = await fetchDatasetMetadata(SMS_DATASET_ID);
   const censusMetadataAfter = await fetchDatasetMetadata(CENSUS_DATASET_ID);
+  assertMetadataVersionExists(SMS_DATASET_ID, smsMetadataAfter);
+  assertMetadataVersionExists(CENSUS_DATASET_ID, censusMetadataAfter);
 
   if (
     metadataVersion(smsMetadataBefore) !== metadataVersion(smsMetadataAfter) ||
@@ -433,6 +459,7 @@ async function main() {
       "Existing CRM rows are counted as overlap and are never changed.",
       "No 30-day registration-age cutoff or maximum fleet-size cutoff is applied.",
       "Cargo classifications are not confirmed equipment types. They do not prove box truck, dry van, reefer, or flatbed equipment.",
+      "Exclusion reason counts may overlap because a row can fail more than one qualification check.",
       "The current outreach eligibility rules and daily sending limits are not changed by this dry-run.",
     ],
   };
